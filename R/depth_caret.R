@@ -8,10 +8,7 @@ library(caret)
 library(recipes)
 library(gbm)
 
-time_foo <- function(x) {
-  lubridate::hour(x) + (lubridate::minute(x) / 60) + 
-    (lubridate::second(x) / 3600) 
-}
+
 
 depth_dat_raw <- readRDS(
   here::here("data", "depth_dat_60min.RDS")) 
@@ -34,8 +31,7 @@ depth_imm <- depth_dat_raw %>%
   filter(stage == "immature") %>% 
   droplevels()
 depth_dat <- depth_imm %>% 
-  mutate(hour = time_foo(date_time_local),
-         logit_rel_depth = qlogis(rel_depth)) %>% 
+  mutate(logit_rel_depth = qlogis(rel_depth)) %>% 
   select(logit_rel_depth, region_f, 
          hour, det_day, mean_bathy = pos_mean_bathy,
          vemco_code) 

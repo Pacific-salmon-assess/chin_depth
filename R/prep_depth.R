@@ -21,8 +21,15 @@ chin_dat <- readRDS(
   )
 
 
-# Moderately cleaned detections data (includes depth/temperature sensors)
+# moderately cleaned detections data (includes depth/temperature sensors)
 depth_raw <- readRDS(here::here("data", "detections_all.RDS"))
+
+
+# function to make hours continuous
+time_foo <- function(x) {
+  lubridate::hour(x) + (lubridate::minute(x) / 60) + 
+    (lubridate::second(x) / 3600) 
+}
 
 
 # function to make depth_data at different bin sizes 
@@ -31,10 +38,12 @@ depth_foo <- function(bin_size = 30) {
     filter(!is.na(depth))  %>% 
     #calculate timestep (width below in minutes) relative to first detection 
     # group_by(vemco_code) %>% 
-    mutate(start_time = min(date_time),
-           timestamp = difftime(start_time, date_time, units = "mins"),
-           timestamp = -1 * round(as.numeric(timestamp)),
-           timestamp_f = cut_width(timestamp, width = bin_size, boundary = -0.1)) %>%
+    mutate(
+      start_time = min(date_time),
+      timestamp = difftime(start_time, date_time, units = "mins"),
+      timestamp = -1 * round(as.numeric(timestamp)),
+      timestamp_f = cut_width(timestamp, width = bin_size, boundary = -0.1)
+    ) %>%
     # bin depth data by tag, receiver, and hour within a day
     group_by(vemco_code, timestamp_f, receiver, latitude, longitude, 
              station_name) %>%
@@ -45,40 +54,39 @@ depth_foo <- function(bin_size = 30) {
     ungroup() %>%
     left_join(., 
               rec %>% 
-                dplyr::select(receiver = receiver_name, mean_bathy, max_bathy, 
-                              sd_bathy, region) %>% 
+                dplyr::select(receiver = receiver_name, mean_bathy = mean_depth,
+                              max_bathy = max_depth, mean_slope:shore_dist,
+                              region) %>% 
                 distinct(),
               by = "receiver") %>%
     mutate(
       region_f = as.factor(region),
       region_f = fct_relevel(region_f, "swvi",  "nwwa", "jdf", 
                              "swwa", "sog", "puget", "columbia", "fraser"),
-      depth = -1 * depth,
       # corrections for when depth is above the surface or deeper than max depth
       # in detection radius
-      depth = ifelse(depth >= -0.1, -0.1, depth),
-      depth_diff = depth - max_bathy,
+      depth = ifelse(depth <= 0.05, 0.05, depth),
+      depth_diff = max_bathy - depth,
       # adjust modest errors in depth relative to bathy
       depth = ifelse(depth_diff > -10 & depth_diff < 0, max_bathy - 0.5, depth),
       rel_depth = depth / max_bathy,
       # misc timestamp cleaning
       date_time_local = lubridate::with_tz(date_time, 
                                            tzone = "America/Los_Angeles"),
-      hour = lubridate::hour(date_time_local),
+      hour = time_foo(date_time_local),
       det_day = lubridate::yday(date_time_local),
-      pos_mean_bathy = -1 * mean_bathy,
-      pos_max_bathy = -1 * max_bathy) %>%
+      vemco_code = as.factor(vemco_code)
+      ) %>%
     left_join(., chin_dat, by = "vemco_code") %>%  
     # remove large errors in depth relative to bottom bathymetry
-    filter(!depth < max_bathy,
-           !is.na(stage)) %>% 
-    mutate(vemco_code = as.factor(vemco_code),
-           pos_depth = -1 * depth#,
-           # calculate expected fw entry date (Oct 18, i.e. max obs day for mat 
-           # fish + 1 day)
-           # exit_day = ifelse(stage == "mature", 292, 292 + 365),
-           # days_to_exit = exit_day - det_day
-    ) #%>% 
+    filter(depth < max_bathy) 
+  
+  # %>% 
+    # mutate(# calculate expected fw entry date (Oct 18, i.e. max obs day for mat 
+    #        # fish + 1 day)
+    #        # exit_day = ifelse(stage == "mature", 292, 292 + 365),
+    #        # days_to_exit = exit_day - det_day
+    # ) #%>% 
   # add terminal distance
   # left_join(.,
   #           term_dist %>%
@@ -94,26 +102,15 @@ depth_foo <- function(bin_size = 30) {
   temp <- suncalc::getSunlightTimes(data = sun_data,
                                     keep = c("sunrise", "sunset"),
                                     tz = "America/Los_Angeles")
-  depth_dat2 <- cbind(depth_dat, temp %>% select(sunrise, sunset)) %>% 
+  cbind(depth_dat, temp %>% select(sunrise, sunset)) %>% 
     mutate(
       day_night = ifelse(date_time_local > sunrise & date_time_local < sunset, 
                          "day", "night")
-    ) 
-  depth_dat2 <- transform(depth_dat2, 
-                          day_night_region = interaction(day_night, region_f, 
-                                                         drop = T))
-  # trim and center variables
-  depth_dat2 %>%
-    select(vemco_code, stage, receiver:longitude, pos_mean_bathy, pos_max_bathy, 
-           sd_bathy, region_f, date_time_local, timestamp_n, hour, day_night, 
-           day_night_region, det_day, year, pos_depth, rel_depth) %>%
-    mutate(
-      mean_bathy_c = pos_mean_bathy - mean(pos_mean_bathy),
-      max_bathy_c = pos_max_bathy - mean(pos_max_bathy),
-      hour_c = hour - mean(hour),
-      day_c = det_day - mean(det_day)) 
-  
-}
+    ) %>% 
+    select(vemco_code, stage, receiver:longitude, mean_bathy:shore_dist, 
+           region_f, date_time_local, timestamp_n, hour, day_night,
+           det_day, year, pos_depth = depth, rel_depth) 
+  }
 
 depth_dat_30 <- depth_foo(bin_size = 30)
 depth_dat_60 <- depth_foo(bin_size = 60)
@@ -129,152 +126,147 @@ saveRDS(depth_dat_60,
 
 ## EXPLORATORY FIGS ------------------------------------------------------------
 
-# DEPTH DISTRIBUTION -----------------------------------------------------------
 
-rec_dist <- readRDS(here::here("data", "generated_data", 
-                               "rec_dist_to_shore.RDS"))
-
-
-depth_dat <- det_dat %>% 
-  filter(grepl("V13P", acoustic_type),
-         !is.na(depth))  %>% 
-  left_join(., 
-            rec %>% 
-              dplyr::select(receiver = receiver_name, mean_bathy, max_bathy, sd_bathy),
-            by = "receiver") %>% 
-  mutate(
-    region_f = as.factor(region),
-    region_f = fct_relevel(region_f, "swvi",  "nwwa", "jdf", "swwa", "sog", 
-                           "puget", "fraser"),
-    depth = -1 * depth,
-    depth = ifelse(depth > 0, runif(1, min = -2, max = -0.01), depth),
-    depth_diff = depth - max_bathy,
-    depth = ifelse(depth_diff > -10 & depth_diff < 0, max_bathy, depth),
-    rel_depth = depth / max_bathy,
-    date_time_local = lubridate::with_tz(date_time, 
-                                         tzone = "America/Los_Angeles"),
-    hour = lubridate::hour(date_time_local),
-    day_night = ifelse(hour < 6 | hour > 19, "night", "day"),
-    det_day = lubridate::yday(date_time_local)
-  ) %>% 
-  filter(!depth < max_bathy)
-
-
-# day night contrasts by different areas
-ggplot(depth_dat) +
-  geom_boxplot(aes(x = day_night, y = depth, fill = stage2)) +
-  facet_wrap(~agg) +
-  ggsidekick::theme_sleek() +
-  facet_wrap(~station_name, scales = "free")
-
-
-#calculate mean depth for each individual
-mean_depth <- depth_dat %>% 
-  group_by(vemco_code, fl, mean_log_e, clip, year_day, cu, agg, det_day, 
-           stage) %>% 
-  summarize(
-    n_depth_events = length(date_time_local), 
-    mean_depth = mean(depth),
-    se_depth = sd(depth) / n_depth_events,
-    ci_low = mean_depth + (qnorm(0.025) * se_depth),
-    ci_up = mean_depth + (qnorm(0.975) * se_depth),
-    .groups = "drop"
-  ) 
-
-ggplot(mean_depth, aes(x = det_day, y = mean_depth, 
-                       fill = n_depth_events)) + 
-  geom_point(shape = 21, size = 2) +
-  geom_pointrange(aes(ymin = ci_low, ymax = ci_up), shape = 21) +
-  labs(y = "Mean Depth (m)",
-       x = "Detection Date (year-day)") +
-  scale_fill_viridis_c() +
-  ggsidekick::theme_sleek() +
-  facet_wrap(~stage)
-
-
-# individual depth distributions by time and terminal location
-depth_dat2 <- depth_dat %>% 
-  mutate(n_det = length(unique(date_time_local)),
-         fl_code = as.factor(paste(fl, vemco_code, sep = "_")),
-         plot_group = case_when(
-           stage == "immature" ~ "immature",
-           TRUE ~ paste(agg, year, sep = "_")
-         )) %>% 
-  filter(!n_det < 10) %>% 
-  ungroup()
-
-route_pal <- RColorBrewer::brewer.pal(length(levels(depth_dat2$region_f)),
-                                      "Spectral")
-names(route_pal) <- levels(fct_rev(depth_dat2$region_f))
-
-depth_list <- split(depth_dat2, depth_dat2$plot_group)
-
-# absolute depth
-depth_plots <- map2(depth_list, names(depth_list), .f = function(x, tit) {
-  ggplot(x, aes(x = date_time_local, y = depth, fill = region_f)) +
-    geom_point(shape = 21) +
-    scale_fill_manual(values = route_pal, name = "") +
-    labs(title = tit, x = "Timestamp", y = "Depth (m)") +
-    lims(y = c(min(depth_dat2$depth), 0)) +
-    ggsidekick::theme_sleek() +
-    facet_wrap(~fct_reorder(fl_code, desc(fl)))
-})
-
-pdf(here::here("figs", "depth", "ind_profiles.pdf"))
-depth_plots
-dev.off()
-
-# relative depth
-rel_depth_plots <- map2(depth_list, names(depth_list), .f = function(x, tit) {
-  ggplot(x, aes(x = date_time_local, y = rel_depth, fill = region_f)) +
-    geom_point(shape = 21) +
-    scale_fill_manual(values = route_pal, name = "") +
-    labs(title = tit, x = "Timestamp", y = "Depth (m)") +
-    lims(y = c(0, 1)) +
-    ggsidekick::theme_sleek() +
-    facet_wrap(~fct_reorder(fl_code, desc(fl)))
-})
-
-pdf(here::here("figs", "depth", "ind_profiles_rel_depth.pdf"))
-rel_depth_plots
-dev.off()
-
-
-## trimmed subset contrasting mature vs immature
-trim_depth <- depth_dat2 %>% 
-  filter(vemco_code %in% c("7703_2019", "7707_2019", "7708_2019", "7696_2019",
-                           "9969_2020", "10017_2020", "7700_2019", "9986_2020", 
-                           "7921_2019")) %>% 
-  ggplot(., aes(x = date_time_local, y = depth, fill = region_f)) +
-  geom_point(shape = 21) +
-  scale_fill_manual(values = route_pal, name = "") +
-  labs(x = "Timestamp", y = "Depth (m)") +
-  lims(y = c(min(depth_dat2$depth), 0)) +
-  ggsidekick::theme_sleek() +
-  facet_wrap(~fct_reorder(vemco_code, desc(fl))) +
-  theme(legend.position = "top")
-
-
-pdf(here::here("figs", "depth", "ind_profiles_trim.pdf"))
-trim_depth
-dev.off()
-
-
-# bathymetry effects
-ggplot(depth_dat %>% filter(!is.na(mean_bathy), !stage2 == "immature"), 
-       aes(x = mean_bathy, y = depth, fill = region_f)) +
-  geom_point(shape = 21) +
-  scale_fill_manual(values = route_pal, name = "") +
-  labs(x = "Mean Bottom Depth", y = "Fish Depth (m)") +
-  ggsidekick::theme_sleek() +
-  facet_wrap(~region_f) +
-  theme(legend.position = "top")
-
-ggplot(depth_dat %>% filter(!is.na(mean_bathy), !stage2 == "immature"), 
-       aes(x = sd_bathy, y = depth, fill = region_f)) +
-  geom_point(shape = 21) +
-  scale_fill_manual(values = route_pal, name = "") +
-  labs(x = "SD Bottom Depth", y = "Fish Depth (m)") +
-  ggsidekick::theme_sleek() +
-  facet_wrap(~region_f) +
-  theme(legend.position = "top")
+# depth_dat <- det_dat %>% 
+#   filter(grepl("V13P", acoustic_type),
+#          !is.na(depth))  %>% 
+#   left_join(., 
+#             rec %>% 
+#               dplyr::select(receiver = receiver_name, mean_bathy, max_bathy, sd_bathy),
+#             by = "receiver") %>% 
+#   mutate(
+#     region_f = as.factor(region),
+#     region_f = fct_relevel(region_f, "swvi",  "nwwa", "jdf", "swwa", "sog", 
+#                            "puget", "fraser"),
+#     depth = -1 * depth,
+#     depth = ifelse(depth > 0, runif(1, min = -2, max = -0.01), depth),
+#     depth_diff = depth - max_bathy,
+#     depth = ifelse(depth_diff > -10 & depth_diff < 0, max_bathy, depth),
+#     rel_depth = depth / max_bathy,
+#     date_time_local = lubridate::with_tz(date_time, 
+#                                          tzone = "America/Los_Angeles"),
+#     hour = lubridate::hour(date_time_local),
+#     day_night = ifelse(hour < 6 | hour > 19, "night", "day"),
+#     det_day = lubridate::yday(date_time_local)
+#   ) %>% 
+#   filter(!depth < max_bathy)
+# 
+# 
+# # day night contrasts by different areas
+# ggplot(depth_dat) +
+#   geom_boxplot(aes(x = day_night, y = depth, fill = stage2)) +
+#   facet_wrap(~agg) +
+#   ggsidekick::theme_sleek() +
+#   facet_wrap(~station_name, scales = "free")
+# 
+# 
+# #calculate mean depth for each individual
+# mean_depth <- depth_dat %>% 
+#   group_by(vemco_code, fl, mean_log_e, clip, year_day, cu, agg, det_day, 
+#            stage) %>% 
+#   summarize(
+#     n_depth_events = length(date_time_local), 
+#     mean_depth = mean(depth),
+#     se_depth = sd(depth) / n_depth_events,
+#     ci_low = mean_depth + (qnorm(0.025) * se_depth),
+#     ci_up = mean_depth + (qnorm(0.975) * se_depth),
+#     .groups = "drop"
+#   ) 
+# 
+# ggplot(mean_depth, aes(x = det_day, y = mean_depth, 
+#                        fill = n_depth_events)) + 
+#   geom_point(shape = 21, size = 2) +
+#   geom_pointrange(aes(ymin = ci_low, ymax = ci_up), shape = 21) +
+#   labs(y = "Mean Depth (m)",
+#        x = "Detection Date (year-day)") +
+#   scale_fill_viridis_c() +
+#   ggsidekick::theme_sleek() +
+#   facet_wrap(~stage)
+# 
+# 
+# # individual depth distributions by time and terminal location
+# depth_dat2 <- depth_dat %>% 
+#   mutate(n_det = length(unique(date_time_local)),
+#          fl_code = as.factor(paste(fl, vemco_code, sep = "_")),
+#          plot_group = case_when(
+#            stage == "immature" ~ "immature",
+#            TRUE ~ paste(agg, year, sep = "_")
+#          )) %>% 
+#   filter(!n_det < 10) %>% 
+#   ungroup()
+# 
+# route_pal <- RColorBrewer::brewer.pal(length(levels(depth_dat2$region_f)),
+#                                       "Spectral")
+# names(route_pal) <- levels(fct_rev(depth_dat2$region_f))
+# 
+# depth_list <- split(depth_dat2, depth_dat2$plot_group)
+# 
+# # absolute depth
+# depth_plots <- map2(depth_list, names(depth_list), .f = function(x, tit) {
+#   ggplot(x, aes(x = date_time_local, y = depth, fill = region_f)) +
+#     geom_point(shape = 21) +
+#     scale_fill_manual(values = route_pal, name = "") +
+#     labs(title = tit, x = "Timestamp", y = "Depth (m)") +
+#     lims(y = c(min(depth_dat2$depth), 0)) +
+#     ggsidekick::theme_sleek() +
+#     facet_wrap(~fct_reorder(fl_code, desc(fl)))
+# })
+# 
+# pdf(here::here("figs", "depth", "ind_profiles.pdf"))
+# depth_plots
+# dev.off()
+# 
+# # relative depth
+# rel_depth_plots <- map2(depth_list, names(depth_list), .f = function(x, tit) {
+#   ggplot(x, aes(x = date_time_local, y = rel_depth, fill = region_f)) +
+#     geom_point(shape = 21) +
+#     scale_fill_manual(values = route_pal, name = "") +
+#     labs(title = tit, x = "Timestamp", y = "Depth (m)") +
+#     lims(y = c(0, 1)) +
+#     ggsidekick::theme_sleek() +
+#     facet_wrap(~fct_reorder(fl_code, desc(fl)))
+# })
+# 
+# pdf(here::here("figs", "depth", "ind_profiles_rel_depth.pdf"))
+# rel_depth_plots
+# dev.off()
+# 
+# 
+# ## trimmed subset contrasting mature vs immature
+# trim_depth <- depth_dat2 %>% 
+#   filter(vemco_code %in% c("7703_2019", "7707_2019", "7708_2019", "7696_2019",
+#                            "9969_2020", "10017_2020", "7700_2019", "9986_2020", 
+#                            "7921_2019")) %>% 
+#   ggplot(., aes(x = date_time_local, y = depth, fill = region_f)) +
+#   geom_point(shape = 21) +
+#   scale_fill_manual(values = route_pal, name = "") +
+#   labs(x = "Timestamp", y = "Depth (m)") +
+#   lims(y = c(min(depth_dat2$depth), 0)) +
+#   ggsidekick::theme_sleek() +
+#   facet_wrap(~fct_reorder(vemco_code, desc(fl))) +
+#   theme(legend.position = "top")
+# 
+# 
+# pdf(here::here("figs", "depth", "ind_profiles_trim.pdf"))
+# trim_depth
+# dev.off()
+# 
+# 
+# # bathymetry effects
+# ggplot(depth_dat %>% filter(!is.na(mean_bathy), !stage2 == "immature"), 
+#        aes(x = mean_bathy, y = depth, fill = region_f)) +
+#   geom_point(shape = 21) +
+#   scale_fill_manual(values = route_pal, name = "") +
+#   labs(x = "Mean Bottom Depth", y = "Fish Depth (m)") +
+#   ggsidekick::theme_sleek() +
+#   facet_wrap(~region_f) +
+#   theme(legend.position = "top")
+# 
+# ggplot(depth_dat %>% filter(!is.na(mean_bathy), !stage2 == "immature"), 
+#        aes(x = sd_bathy, y = depth, fill = region_f)) +
+#   geom_point(shape = 21) +
+#   scale_fill_manual(values = route_pal, name = "") +
+#   labs(x = "SD Bottom Depth", y = "Fish Depth (m)") +
+#   ggsidekick::theme_sleek() +
+#   facet_wrap(~region_f) +
+#   theme(legend.position = "top")

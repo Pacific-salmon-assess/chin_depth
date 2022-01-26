@@ -12,7 +12,7 @@ stage_dat <- readRDS(here::here("data", "generated_data", "lifestage_df.RDS"))
 
 # biological data
 chin_dat <- readRDS(
-  here::here("data", "tagging_data", "cleanTagData_GSI.RDS")) %>% 
+  here::here("data", "tagging_data", "acousticOnly_GSI.RDS")) %>% 
   filter(!is.na(acoustic),
          !grepl("MAGNET", comment)) %>% 
   rename(vemco_code = acoustic_year) %>% 

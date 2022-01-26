@@ -4,15 +4,14 @@
 library(tidyverse)
 
 # receiver data
-rec <- readRDS(here::here("data", "tagging_data", "for_glatos",
-                          "receivers_all.RDS"))$rec_all 
+rec <- readRDS(here::here("data", "receivers_all.RDS"))$rec_all 
 
 # life stage estimates
-stage_dat <- readRDS(here::here("data", "generated_data", "lifestage_df.RDS"))
+stage_dat <- readRDS(here::here("data", "lifestage_df.RDS"))
 
 # biological data
 chin_dat <- readRDS(
-  here::here("data", "tagging_data", "acousticOnly_GSI.RDS")) %>% 
+  here::here("data", "acousticOnly_GSI.RDS")) %>% 
   filter(!is.na(acoustic),
          !grepl("MAGNET", comment)) %>% 
   rename(vemco_code = acoustic_year) %>% 
@@ -23,8 +22,7 @@ chin_dat <- readRDS(
 
 
 # Moderately cleaned detections data (includes depth/temperature sensors)
-depth_raw <- readRDS(here::here("data", "tagging_data", "for_glatos",
-                                "detections_all.RDS"))
+depth_raw <- readRDS(here::here("data", "detections_all.RDS"))
 
 
 # function to make depth_data at different bin sizes 
@@ -107,7 +105,7 @@ depth_foo <- function(bin_size = 30) {
   # trim and center variables
   depth_dat2 %>%
     select(vemco_code, stage, receiver:longitude, pos_mean_bathy, pos_max_bathy, 
-           region_f, date_time_local, timestamp_n, hour, day_night, 
+           sd_bathy, region_f, date_time_local, timestamp_n, hour, day_night, 
            day_night_region, det_day, year, pos_depth, rel_depth) %>%
     mutate(
       mean_bathy_c = pos_mean_bathy - mean(pos_mean_bathy),
@@ -123,9 +121,9 @@ depth_dat_60 <- depth_foo(bin_size = 60)
 
 # export
 saveRDS(depth_dat_30,
-        here::here("data", "generated_data", "depth_dat_30min.RDS"))
+        here::here("data", "depth_dat_30min.RDS"))
 saveRDS(depth_dat_60,
-        here::here("data", "generated_data", "depth_dat_60min.RDS"))
+        here::here("data", "depth_dat_60min.RDS"))
 
 
 

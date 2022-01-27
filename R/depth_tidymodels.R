@@ -20,7 +20,12 @@ registerDoFuture()
 cl <- parallel::makeCluster(all_cores)
 plan(cluster, workers = cl)
 
-depth_dat <- readRDS(here::here("data", "depth_dat_60min.RDS"))
+depth_dat <- readRDS(here::here("data", "depth_dat_60min.RDS")) %>% 
+  mutate(
+    day_c = as.numeric(scale(det_day, center = TRUE, scale = FALSE)),
+    hour_c = as.numeric(scale(hour, center = TRUE, scale = FALSE)),
+    max_bathy_c = as.numeric(scale(max_bathy, center = TRUE, scale = FALSE))
+  )
 
 ggplot(depth_dat, aes(longitude, latitude, colour = pos_depth)) +
   geom_point()

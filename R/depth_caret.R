@@ -89,10 +89,16 @@ prep(depth_recipe) %>%
 
 ## FIT CARET -------------------------------------------------------------------
 
-# parallelize
+# parallelize based on operating system
 ncores <- parallel::detectCores() - 2
-doMC::registerDoMC(ncores)
-
+if (Sys.info()['sysname'] == "Windows") {
+  library(doFuture)
+  registerDoFuture()
+  cl <- parallel::makeCluster(ncores)
+  plan(cluster, workers = cl)
+} else {
+  doMC::registerDoMC(ncores)
+}
 
 # note does not account for different tags among folds
 depth_ctrl <- trainControl(## 10-fold CV
@@ -104,7 +110,7 @@ depth_ctrl <- trainControl(## 10-fold CV
 
 # boosted gradient model 
 # adjust grid space for hyperparameter tuning
-gbmGrid <-  expand.grid(interaction.depth = c(5, 9),
+gbmGrid <-  expand.grid(interaction.depth = 9,
                         n.trees = (10:25)*50,
                         shrinkage = 0.1,
                         n.minobsinnode = 20)

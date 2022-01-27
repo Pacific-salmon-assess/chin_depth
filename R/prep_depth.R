@@ -22,7 +22,7 @@ chin_dat <- readRDS(
 
 
 # moderately cleaned detections data (includes depth/temperature sensors)
-depth_raw <- readRDS(here::here("data", "detections_all.RDS"))
+depth_raw <- readRDS(here::here("data", "detections_all.RDS")) 
 
 
 # function to make hours continuous
@@ -56,7 +56,7 @@ depth_foo <- function(bin_size = 30) {
               rec %>% 
                 dplyr::select(receiver = receiver_name, mean_bathy = mean_depth,
                               max_bathy = max_depth, mean_slope:shore_dist,
-                              region) %>% 
+                              region, marine) %>% 
                 distinct(),
               by = "receiver") %>%
     mutate(
@@ -78,8 +78,13 @@ depth_foo <- function(bin_size = 30) {
       vemco_code = as.factor(vemco_code)
       ) %>%
     left_join(., chin_dat, by = "vemco_code") %>%  
-    # remove large errors in depth relative to bottom bathymetry
-    filter(depth < max_bathy) 
+    filter(
+      # remove large errors in depth relative to bottom bathymetry
+      depth < max_bathy,
+      # remove regions with suspect depth estimates
+      marine == "yes"
+      ) %>% 
+    droplevels()
   
   # %>% 
     # mutate(# calculate expected fw entry date (Oct 18, i.e. max obs day for mat 

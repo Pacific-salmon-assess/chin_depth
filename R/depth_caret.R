@@ -27,24 +27,24 @@ depth_dat_raw <- readRDS(
 
 
 depth_imm <- depth_dat_raw %>%  
-  filter(stage == "immature") %>% 
+  # filter(stage == "immature") %>% 
   droplevels()
 
-depth_dat <- depth_imm %>% 
+depth_dat <- depth_dat_raw %>% 
   mutate(logit_rel_depth = qlogis(rel_depth)) %>% 
-  select(logit_rel_depth, latitude, longitude,
+  select(logit_rel_depth, stage, latitude, longitude,
          hour, det_day, mean_bathy, mean_slope, shore_dist,
          vemco_code) 
 
 # check no infinite values in transformed relative depth
 nrow(depth_dat[is.infinite(depth_dat$logit_rel_depth), ])
 depth_dat <- depth_dat[is.finite(depth_dat$logit_rel_depth), ]
-hist(depth_dat$logit_rel_depth)
+# hist(depth_dat$logit_rel_depth)
 
 
 # subset into training/testing based on 
 set.seed(123)
-test_tags <- sample(depth_imm$vemco_code, size = 2, replace = F)
+test_tags <- sample(depth_dat$vemco_code, size = 10, replace = F)
 train_depth <- depth_dat %>% 
   filter(!vemco_code %in% test_tags) %>%
   select(-vemco_code)
@@ -53,8 +53,7 @@ test_depth <- depth_dat %>%
   select(-vemco_code)
 
 ggplot(test_depth) +
-  geom_point(aes(x = hour, y = logit_rel_depth), alpha = 0.5) +
-  facet_wrap(~region_f)
+  geom_point(aes(x = hour, y = logit_rel_depth), alpha = 0.5)
 
   
 ## CARET PRE-PROCESSING --------------------------------------------------------
@@ -74,8 +73,8 @@ depth_recipe <- recipe(logit_rel_depth ~ ., data = train_depth) %>%
   # step_scale(all_predictors())
 
 # check recipe
-prep(depth_recipe) %>% 
-  bake(., new_data = train_depth) %>% 
+prep(depth_recipe) %>%
+  bake(., new_data = train_depth) %>%
   glimpse()
 
 
@@ -90,12 +89,12 @@ prep(depth_recipe) %>%
 ## FIT CARET -------------------------------------------------------------------
 
 # parallelize based on operating system
-ncores <- parallel::detectCores() - 2
+library("parallel")
+ncores <- detectCores() - 2
 if (Sys.info()['sysname'] == "Windows") {
-  library(doFuture)
-  registerDoFuture()
-  cl <- parallel::makeCluster(ncores)
-  plan(cluster, workers = cl)
+  library("doParallel")
+  cl <- makeCluster(ncores)
+  registerDoParallel(cl)
 } else {
   doMC::registerDoMC(ncores)
 }
@@ -115,6 +114,7 @@ gbmGrid <-  expand.grid(interaction.depth = 9,
                         shrinkage = 0.1,
                         n.minobsinnode = 20)
 
+tictoc::tic()
 depth_gbm <- train(depth_recipe, train_depth,
                     method = "gbm", 
                     metric = "RMSE",
@@ -122,12 +122,11 @@ depth_gbm <- train(depth_recipe, train_depth,
                     # tuneLength = 10,
                     trControl = depth_ctrl,
                     tuneGrid = gbmGrid)
-
-trellis.par.set(caretTheme())
-plot(depth_gbm)  
+tictoc::toc()
 
 
 # random forest model
+tictoc::tic()
 depth_rf <- train(depth_recipe, train_depth,
                    method = "ranger", 
                    metric = "RMSE",
@@ -135,7 +134,13 @@ depth_rf <- train(depth_recipe, train_depth,
                    trControl = depth_ctrl,
                    tuneLength = 8,
                    num.trees = 1000)
+tictoc::toc()
+
+
+trellis.par.set(caretTheme())
+plot(depth_gbm)  
 plot(depth_rf)
+
 
 ## compare
 bwplot(resamples(
@@ -157,15 +162,13 @@ pred_foo <- function(mod, dat = test_depth) {
 }
 
 pred_foo(depth_gbm, dat = test_depth)
-pred_foo(depth_rf, dat = train_depth)
+pred_foo(depth_rf, dat = test_depth)
 
-
-# variable importance
-gbm_imp <- varImp(depth_gbm, scale = F)
-plot(gbm_imp)
-rf_imp <- varImp(depth_rf)
 
 # evaluate patterns
+library(DALEX)
+library(DALEXtra)
+
 explainer_gbm <- explain(
   depth_gbm,
   data = select(train_depth, hour, det_day, mean_bathy, mean_slope, shore_dist,
@@ -180,6 +183,11 @@ explainer_rf <- explain(
   y = train_depth$logit_rel_depth,
   label = "random forest"
 )
+
+# variable importance
+plot(feature_importance(explainer_gbm))
+plot(feature_importance(explainer_rf))
+
 
 # function to visualize profiles
 make_pdp <- function(param) {
@@ -199,32 +207,43 @@ make_pdp("latitude")
 make_pdp("longitude")
 
 
-dum <- model_profile(explainer_gbm, N = 400, variables = "hour")
-dum2 <- model_profile(explainer_rf, N = 400, variables = "hour")
+# generate spatial predictions based on bathymetric data
+# TODO: stratify predictions by time of day and year day to visualize spatial 
+# impact
+# TODO: interpolate missing slope estimates
 
-rbind(as_tibble(dum$agr_profiles), as_tibble(dum2$agr_profiles)) %>%
-  ggplot(aes(`_x_`, `_yhat_`, color = `_label_`)) +
-  geom_line() + xlab("hour")
+coast <- readRDS(here::here("data", "crop_coast_sf.RDS"))
+bath_grid <- readRDS(here::here("data", "pred_bathy_grid.RDS")) %>%
+  #add non-spatial covariates
+  mutate(
+    hour = 12,
+    det_day = 182
+  ) %>% 
+  filter(!is.na(slope)) %>% 
+  rename(longitude = X, latitude = Y, mean_bathy = depth, mean_slope = slope)
 
-library(DALEX)
-library(DALEXtra)
+preds <- predict(depth_rf, newdata = bath_grid)
 
-explainer_rf <- explain_tidymodels(
-  rf_fit,
-  data = select(dat_train, hour_c, day_c, max_bathy_c, latitude, longitude),
-  y = dat_train$logit_rel_depth,
-  label = "random forest"
-)
+# add predictions and transform
+bath_grid2 <- bath_grid %>% 
+  mutate(
+    logit_pred = preds,
+    rel_pred = plogis(logit_pred),
+    pred = mean_bathy * rel_pred
+    ) %>% 
+  filter(
+    !(pred > 400)
+  )
 
-make_pdp <- function(param) {
-  pdp_rf <- model_profile(explainer_rf, N = 400, variables = param)
-  as_tibble(pdp_rf$agr_profiles) %>%
-    ggplot(aes(`_x_`, `_yhat_`, color = `_label_`)) +
-    geom_line() + xlab(param)
-}
-
-make_pdp("hour_c")
-make_pdp("day_c")
-make_pdp("max_bathy_c")
-make_pdp("latitude")
-make_pdp("longitude")
+ggplot() + 
+  geom_sf(data = coast) +
+  geom_raster(data = bath_grid2, 
+              aes(x = longitude, y = latitude, fill = mean_bathy)) +
+  scale_fill_viridis_c() +
+  ggsidekick::theme_sleek()
+ggplot() + 
+  geom_sf(data = coast) +
+  geom_raster(data = bath_grid2, 
+              aes(x = longitude, y = latitude, fill = pred)) +
+  scale_fill_viridis_c() +
+  ggsidekick::theme_sleek()

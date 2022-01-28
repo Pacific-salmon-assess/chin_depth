@@ -25,6 +25,8 @@ depth_dat_raw <- readRDS(
 #   geom_boxplot(aes(x = day_night, y = rel_depth)) +
 #   facet_grid(stage~region_f)
 
+# TODO: fit model with fixed effect for stage
+# TODO: fit model stratified by tag, stage, space/time(?)
 
 depth_imm <- depth_dat_raw %>%  
   # filter(stage == "immature") %>% 
@@ -198,6 +200,8 @@ make_pdp <- function(param) {
     geom_line() + xlab(param)
 }
 
+# TODO: how to optimize visuals (e.g. smooths?)
+# TODO: how to add estimates of uncertainty
 make_pdp("hour")
 make_pdp("det_day")
 make_pdp("mean_bathy")
@@ -208,42 +212,56 @@ make_pdp("longitude")
 
 
 # generate spatial predictions based on bathymetric data
-# TODO: stratify predictions by time of day and year day to visualize spatial 
-# impact
-# TODO: interpolate missing slope estimates
+# TODO: interpolate missing slope estimates (n = 544 of ~20k)
 
 coast <- readRDS(here::here("data", "crop_coast_sf.RDS"))
+
 bath_grid <- readRDS(here::here("data", "pred_bathy_grid.RDS")) %>%
-  #add non-spatial covariates
-  mutate(
-    hour = 12,
-    det_day = 182
-  ) %>% 
   filter(!is.na(slope)) %>% 
   rename(longitude = X, latitude = Y, mean_bathy = depth, mean_slope = slope)
 
-preds <- predict(depth_rf, newdata = bath_grid)
-
-# add predictions and transform
-bath_grid2 <- bath_grid %>% 
+# stratify predictions by non-spatial covariates
+dat <- expand_grid(
+  hour = c(0.5, 12.5),
+  det_day = c(90, 150, 210, 270)
+) %>% 
   mutate(
-    logit_pred = preds,
-    rel_pred = plogis(logit_pred),
-    pred = mean_bathy * rel_pred
-    ) %>% 
-  filter(
-    !(pred > 400)
+    # create prediction grid based on fixed covariates
+    pred_grid = purrr::map2(hour, det_day, function (x, y) {
+      bath_grid %>% 
+        mutate(
+          hour = x,
+          det_day = y
+        )
+    }),
+    # generate predictions
+    preds = purrr::map(pred_grid, function (x) {
+      dum <- predict(depth_rf, newdata = x)
+      # calculate actual depth
+      bath_grid %>% 
+        mutate(
+          logit_pred = dum,
+          rel_pred = plogis(logit_pred),
+          pred = mean_bathy * rel_pred
+        ) %>% 
+        filter(
+          !(pred > 300)
+        )
+      }
+      )
   )
+  
+
 
 ggplot() + 
   geom_sf(data = coast) +
-  geom_raster(data = bath_grid2, 
-              aes(x = longitude, y = latitude, fill = mean_bathy)) +
+  geom_raster(data = dat$preds[[1]], 
+              aes(x = longitude, y = latitude, fill = pred)) +
   scale_fill_viridis_c() +
   ggsidekick::theme_sleek()
 ggplot() + 
   geom_sf(data = coast) +
-  geom_raster(data = bath_grid2, 
+  geom_raster(data = dat$preds[[8]], 
               aes(x = longitude, y = latitude, fill = pred)) +
   scale_fill_viridis_c() +
   ggsidekick::theme_sleek()

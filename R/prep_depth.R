@@ -15,14 +15,16 @@ chin_dat <- readRDS(
   filter(!is.na(acoustic),
          !grepl("MAGNET", comment)) %>% 
   rename(vemco_code = acoustic_year) %>% 
-  left_join(., stage_dat %>% select(vemco_code, stage), by = "vemco_code") %>% 
+  left_join(., 
+            stage_dat %>% dplyr::select(vemco_code, stage), by = "vemco_code") %>% 
   mutate(
     stage = ifelse(stage == "unknown", "mature", stage)
   )
 
 
 # moderately cleaned detections data (includes depth/temperature sensors)
-depth_raw <- readRDS(here::here("data", "detections_all.RDS")) 
+depth_raw <- readRDS(here::here("data", "detections_all.RDS")) %>%
+  filter(!is.na(depth))
 
 
 # function to make hours continuous
@@ -34,29 +36,40 @@ time_foo <- function(x) {
 
 # function to make depth_data at different bin sizes 
 depth_foo <- function(bin_size = 30) {
-  depth_dat <- depth_raw %>%
-    filter(!is.na(depth))  %>% 
-    #calculate timestep (width below in minutes) relative to first detection 
-    # group_by(vemco_code) %>% 
-    mutate(
-      start_time = min(date_time),
-      timestamp = difftime(start_time, date_time, units = "mins"),
-      timestamp = -1 * round(as.numeric(timestamp)),
-      timestamp_f = cut_width(timestamp, width = bin_size, boundary = -0.1)
-    ) %>%
-    # bin depth data by tag, receiver, and hour within a day
-    group_by(vemco_code, timestamp_f, receiver, latitude, longitude, 
-             station_name) %>%
-    summarize(timestamp_n = mean(timestamp) + rnorm(1, 0, 0.01), 
-              date_time = mean(date_time),
-              depth = mean(depth),
-              .groups = "drop") %>%
-    ungroup() %>%
+  if (!is.null(bin_size)) {
+    depth_dat <- depth_raw %>% 
+      #calculate timestep (width below in minutes) relative to first detection 
+      # group_by(vemco_code) %>% 
+      mutate(
+        start_time = min(date_time),
+        timestamp = difftime(start_time, date_time, units = "mins"),
+        timestamp = -1 * round(as.numeric(timestamp)),
+        timestamp_f = cut_width(timestamp, width = bin_size, boundary = -0.1)
+      ) %>%
+      # bin depth data by tag, receiver, and hour within a day
+      group_by(vemco_code, timestamp_f, receiver, latitude, longitude, 
+               station_name, region) %>%
+      summarize(timestamp_n = mean(timestamp) + rnorm(1, 0, 0.01), 
+                date_time = mean(date_time),
+                depth = mean(depth),
+                .groups = "drop") %>%
+      ungroup()
+  } else {
+    depth_dat <- depth_raw %>% 
+      #calculate timestep (width below in minutes) relative to first detection 
+      # group_by(vemco_code) %>% 
+      mutate(
+        start_time = min(date_time),
+        timestamp = difftime(start_time, date_time, units = "mins"),
+        timestamp_n = -1 * round(as.numeric(timestamp))
+        )
+  }
+   depth_dat2 <- depth_dat %>%
     left_join(., 
               rec %>% 
                 dplyr::select(receiver = receiver_name, mean_bathy = mean_depth,
                               max_bathy = max_depth, mean_slope:shore_dist,
-                              region, marine) %>% 
+                              marine) %>% 
                 distinct(),
               by = "receiver") %>%
     mutate(
@@ -101,27 +114,32 @@ depth_foo <- function(bin_size = 30) {
   
   
   # add sunrise/sunset data
-  sun_data <- data.frame(date = as.Date(depth_dat$date_time_local),
-                         lat = depth_dat$latitude, 
-                         lon = depth_dat$longitude)
+  sun_data <- data.frame(date = as.Date(depth_dat2$date_time_local),
+                         lat = depth_dat2$latitude, 
+                         lon = depth_dat2$longitude)
   temp <- suncalc::getSunlightTimes(data = sun_data,
                                     keep = c("sunrise", "sunset"),
                                     tz = "America/Los_Angeles")
-  cbind(depth_dat, temp %>% select(sunrise, sunset)) %>% 
+  cbind(depth_dat2, temp %>% dplyr::select(sunrise, sunset)) %>% 
     mutate(
       day_night = ifelse(date_time_local > sunrise & date_time_local < sunset, 
                          "day", "night")
     ) %>% 
-    select(vemco_code, stage, receiver:longitude, mean_bathy:shore_dist, 
-           region_f, date_time_local, timestamp_n, hour, day_night,
-           det_day, year, pos_depth = depth, rel_depth) 
+    dplyr::select(
+      vemco_code, stage, receiver:longitude, mean_bathy:shore_dist, 
+      region_f, date_time_local, timestamp_n, hour, day_night,
+      det_day, year, pos_depth = depth, rel_depth
+    ) 
   }
 
+depth_dat_null <- depth_foo(bin_size = NULL)
 depth_dat_30 <- depth_foo(bin_size = 30)
 depth_dat_60 <- depth_foo(bin_size = 60)
 
 
 # export
+saveRDS(depth_dat_null,
+        here::here("data", "depth_dat_nobin.RDS"))
 saveRDS(depth_dat_30,
         here::here("data", "depth_dat_30min.RDS"))
 saveRDS(depth_dat_60,

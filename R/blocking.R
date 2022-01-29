@@ -8,13 +8,16 @@ library(raster)
 library(sf)
 
 depth_dat_raw <- readRDS(
-  here::here("data", "depth_dat_60min.RDS")) 
+  here::here("data", "depth_dat_nobin.RDS")) 
+
+# n_blocks (shared among all methods)
+n_blocks <- 5
+
+
+## SPATIAL BLOCKING ------------------------------------------------------------
 
 coast <- readRDS(here::here("data", "coast_sf.RDS"))
 bath_list <- readRDS(here::here("data", "bathy_lowres_rasters.RDS"))
-# pred_bath_grid <- readRDS(here::here("data", "pred_bathy_grid.RDS")) %>%
-#   filter(!is.na(slope)) %>% 
-#   rename(longitude = X, latitude = Y, mean_bathy = depth, mean_slope = slope)
 
 bath <- merge(bath_list[[1]], bath_list[[2]]) %>% 
   merge(., bath_list[[3]])
@@ -32,7 +35,7 @@ plot(depth_sf, pch = 16, col = "red", add = TRUE)
 
 
 # spatial correlation in predictors
-# TODO: currently only uses bathymetry
+# TODO: currently only uses bathymetry (others were non-sensical)
 sac <- spatialAutoRange(rasterLayer = bath_list[[1]],
                         sampleNumber = 5000,
                         doParallel = TRUE,
@@ -43,7 +46,7 @@ sb <- spatialBlock(speciesData = depth_sf,
                    species = NULL,
                    rasterLayer = bath_utm,
                    theRange = 55000, # size of the blocks
-                   k = 5,
+                   k = n_blocks,
                    selection = "systematic",
                    iteration = 100, # find evenly dispersed folds
                    biomod2Format = TRUE,
@@ -53,6 +56,41 @@ sb <- spatialBlock(speciesData = depth_sf,
 # visualize location of points
 sb$plots + geom_sf(data = depth_sf, alpha = 0.5)
 
+sp_folds <- sb$foldID
+
+
+## TEMPORAL BLOCKING -----------------------------------------------------------
+
+# previous analyses indicate temporal autocorrelation on the span of several 
+# hours, bin accordingly within an individual (units = minutes)
+depth_dat_raw$timestamp_f = cut_width(depth_dat_raw$timestamp_n, 
+                                      width = 180, boundary = -0.1)
+depth_dat_raw$id = paste(depth_dat_raw$vemco_code, depth_dat_raw$timestamp_f,
+                         sep = "_")
+                         
+# make vector of 5 blocks
+time_folds = data.frame(
+  id = unique(depth_dat_raw$id),
+  time_block = sample.int(n_blocks, length(unique(depth_dat_raw$id)), 
+                     replace = T)) %>% 
+  right_join(., depth_dat_raw %>% dplyr::select(id), by = "id") 
+
+
+## INDIVIDUAL BLOCKING ---------------------------------------------------------
+
+# make vector of 5 blocks
+ind_folds = data.frame(
+  vemco_code = unique(depth_dat_raw$vemco_code),
+  block = sample.int(n_blocks, length(unique(depth_dat_raw$vemco_code)), 
+                     replace = T)) 
+
+
+
+## LIST OF BLOCKING IDS --------------------------------------------------------
+
+block_list <- list(space = sp_folds, time = time_folds, individual = ind_folds)
+saveRDS(block_list, 
+        here::here("data", "5block_ids.RDS"))
 
 
 # blockCV Example --------------------------------------------------------------

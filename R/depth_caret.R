@@ -9,8 +9,21 @@ library(recipes)
 library(gbm)
 
 
+# add block IDs (generated in blocking)
+block_list <- readRDS(here::here("data", "5block_ids.RDS"))
+
 depth_dat_raw <- readRDS(
-  here::here("data", "depth_dat_60min.RDS")) 
+  here::here("data", "depth_dat_nobin.RDS")) %>% 
+  mutate(
+    space_block = block_list$space,
+    time_block = block_list$time$time_block
+  ) %>% 
+  left_join(., 
+            block_list$individual %>% 
+              rename(ind_block = block), 
+            by = "vemco_code") %>% 
+  glimpse()
+
 
 
 # ggplot(depth_dat_raw) +

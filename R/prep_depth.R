@@ -133,13 +133,15 @@ depth_foo <- function(bin_size = 30) {
   }
 
 depth_dat_null <- depth_foo(bin_size = NULL)
-depth_dat_30 <- depth_foo(bin_size = 30)
+depth_dat_15 <- depth_foo(bin_size = 30)
 depth_dat_60 <- depth_foo(bin_size = 60)
 
 
 # export
 saveRDS(depth_dat_null,
         here::here("data", "depth_dat_nobin.RDS"))
+saveRDS(depth_dat_15,
+        here::here("data", "depth_dat_15min.RDS"))
 saveRDS(depth_dat_30,
         here::here("data", "depth_dat_30min.RDS"))
 saveRDS(depth_dat_60,

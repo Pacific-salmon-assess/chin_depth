@@ -10,10 +10,12 @@ library(gbm)
 
 
 # add block IDs (generated in blocking)
+# note that these aren't stratified (e.g. individuals are mixed between blocks
+# in the time/space blocking structures)
 block_list <- readRDS(here::here("data", "5block_ids.RDS"))
 
 depth_dat_raw <- readRDS(
-  here::here("data", "depth_dat_nobin.RDS")) %>% 
+  here::here("data", "depth_dat_15min.RDS")) %>% 
   mutate(
     space_block = block_list$space,
     time_block = block_list$time$time_block
@@ -21,9 +23,15 @@ depth_dat_raw <- readRDS(
   left_join(., 
             block_list$individual %>% 
               rename(ind_block = block), 
-            by = "vemco_code") %>% 
-  glimpse()
+            by = "vemco_code") 
 
+
+# check balance of blocks
+depth_dat_raw %>% 
+  pivot_longer(ends_with("block"), names_to = "block_type") %>%
+  ggplot(.) +
+  geom_bar(aes(x = as.factor(value)), stat = "count") +
+  facet_wrap(~block_type)
 
 
 # ggplot(depth_dat_raw) +
@@ -38,18 +46,19 @@ depth_dat_raw <- readRDS(
 #   geom_boxplot(aes(x = day_night, y = rel_depth)) +
 #   facet_grid(stage~region_f)
 
-# TODO: fit model with fixed effect for stage
 # TODO: fit model stratified by tag, stage, space/time(?)
 
-depth_imm <- depth_dat_raw %>%  
-  # filter(stage == "immature") %>% 
-  droplevels()
+# depth_imm <- depth_dat_raw %>%  
+#   filter(stage == "immature") %>%
+#   droplevels()
 
 depth_dat <- depth_dat_raw %>% 
   mutate(logit_rel_depth = qlogis(rel_depth)) %>% 
-  select(logit_rel_depth, stage, latitude, longitude,
-         hour, det_day, mean_bathy, mean_slope, shore_dist,
-         vemco_code) 
+  dplyr::select(
+    logit_rel_depth, stage, latitude, longitude, 
+    hour, det_day, mean_bathy, mean_slope, shore_dist,
+    ind_block
+  ) 
 
 # check no infinite values in transformed relative depth
 nrow(depth_dat[is.infinite(depth_dat$logit_rel_depth), ])
@@ -59,13 +68,18 @@ depth_dat <- depth_dat[is.finite(depth_dat$logit_rel_depth), ]
 
 # subset into training/testing based on 
 set.seed(123)
-test_tags <- sample(depth_dat$vemco_code, size = 10, replace = F)
-train_depth <- depth_dat %>% 
-  filter(!vemco_code %in% test_tags) %>%
-  select(-vemco_code)
-test_depth <- depth_dat %>% 
-  filter(vemco_code %in% test_tags) %>%
-  select(-vemco_code)
+dat_split <- rsample::initial_split(depth_dat %>% dplyr::select(-ind_block),
+                                    prop = 0.8, strata = stage)
+train_depth <- rsample::training(dat_split)
+test_depth <- rsample::testing(dat_split)
+
+
+# train_depth <- depth_dat %>% 
+#   filter(!ind_block == "5") 
+# train_folds <- groupKFold(train_depth$ind_block, 
+#                           k = length(unique(train_depth$ind_block))) 
+# test_depth <- depth_dat %>% 
+#   filter(ind_block == "5") 
 
 ggplot(test_depth) +
   geom_point(aes(x = hour, y = logit_rel_depth), alpha = 0.5)
@@ -74,12 +88,13 @@ ggplot(test_depth) +
 ## CARET PRE-PROCESSING --------------------------------------------------------
 
 #check correlations with additional bathy variables
-corr <- cor(test_depth %>%  select(hour:shore_dist))
+corr <- cor(train_depth %>%  dplyr::select(hour:shore_dist, timestamp_n))
 ggcorrplot::ggcorrplot(corr)
 # shore distance and mean bathy just under 0.75, leave for now
 
 
-depth_recipe <- recipe(logit_rel_depth ~ ., data = train_depth) %>% 
+depth_recipe <- recipe(logit_rel_depth ~ ., 
+                       data = train_depth) %>% 
   step_nzv(all_predictors()) %>% 
   #consider adding PCA for bathymetric features
   #step_pca(contains("VSA"), prefix = "surf_area_",  threshold = .95) %>% 
@@ -91,14 +106,6 @@ depth_recipe <- recipe(logit_rel_depth ~ ., data = train_depth) %>%
 prep(depth_recipe) %>%
   bake(., new_data = train_depth) %>%
   glimpse()
-
-
-# # random splitting 
-# # stratified splitting of data
-# set.seed(998)
-# folds <- groupKFold(group = depth_imm$vemco_code, k = 5)
-# training <- Sonar[ inTraining,]
-# testing  <- Sonar[-inTraining,]
 
 
 ## FIT CARET -------------------------------------------------------------------
@@ -120,17 +127,22 @@ depth_ctrl <- trainControl(## 10-fold CV
   number = 10,
   ## repeated ten times
   repeats = 10)
-
+# 4 folds grouped by blocking structure
+# depth_ctrl <- trainControl(
+#   method="repeatedcv", 
+#   index = train_folds
+# )
 
 # boosted gradient model 
 # adjust grid space for hyperparameter tuning
-gbmGrid <-  expand.grid(interaction.depth = 9,
-                        n.trees = (10:25)*50,
+gbmGrid <-  expand.grid(interaction.depth = c(3, 5, 9),
+                        n.trees = (1:25)*50,
                         shrinkage = 0.1,
                         n.minobsinnode = 20)
 
 tictoc::tic()
-depth_gbm <- train(depth_recipe, train_depth,
+depth_gbm <- train(depth_recipe, 
+                   train_depth, #%>% dplyr::select(-ind_block),
                     method = "gbm", 
                     metric = "RMSE",
                     maximize = FALSE,
@@ -142,13 +154,14 @@ tictoc::toc()
 
 # random forest model
 tictoc::tic()
-depth_rf <- train(depth_recipe, train_depth,
+depth_rf <- train(depth_recipe, 
+                  train_depth, #%>% dplyr::select(-ind_block),
                    method = "ranger", 
                    metric = "RMSE",
                    maximize = FALSE,
                    trControl = depth_ctrl,
-                   tuneLength = 8,
-                   num.trees = 1000)
+                   tuneLength = 6,
+                   num.trees = 500)
 tictoc::toc()
 
 
@@ -176,9 +189,9 @@ pred_foo <- function(mod, dat = test_depth) {
   abline(0, 1, col = "red")
 }
 
-pred_foo(depth_gbm, dat = test_depth)
+pred_foo(depth_gbm, dat = train_depth)
+pred_foo(depth_rf, dat = train_depth)
 pred_foo(depth_rf, dat = test_depth)
-
 
 # evaluate patterns
 library(DALEX)
@@ -186,15 +199,19 @@ library(DALEXtra)
 
 explainer_gbm <- explain(
   depth_gbm,
-  data = select(train_depth, hour, det_day, mean_bathy, mean_slope, shore_dist,
-                latitude, longitude),
+  data = dplyr::select(
+    train_depth, timestamp_n, hour, det_day, mean_bathy, mean_slope, shore_dist,
+    latitude, longitude, stage
+  ),
   y = train_depth$logit_rel_depth,
   label = "gbm"
 )
 explainer_rf <- explain(
   depth_gbm,
-  data = select(train_depth, hour, det_day, mean_bathy, mean_slope, shore_dist,
-                latitude, longitude),
+  data = dplyr::select(
+    train_depth, timestamp_n, hour, det_day, mean_bathy, mean_slope, shore_dist,
+    latitude, longitude, stage
+  ),
   y = train_depth$logit_rel_depth,
   label = "random forest"
 )

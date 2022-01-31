@@ -190,7 +190,7 @@ if (Sys.info()['sysname'] == "Windows") {
 # fit GBMs (random forest substantially slower and only moderately better 
 # performance)
 gbmGrid <-  expand.grid(interaction.depth = c(3, 5, 9),
-                        n.trees = seq(2, 24, by = 2) * 50,
+                        n.trees = seq(1, 55, by = 5) * 20,
                         shrinkage = 0.1,
                         n.minobsinnode = 20)
 
@@ -216,7 +216,22 @@ trellis.par.set(caretTheme())
 purrr::map(gbm_list, plot) 
 
 
-## compare
-bwplot(
-  resamples(gbm_list),
-  metric = "RMSE")
+
+pred_foo <- function(mod, dat) {
+  preds <- predict(mod, newdata = dat)
+  dat$logit_preds <- preds
+  
+  par(mfrow = c(2, 1))
+  plot(logit_preds ~ logit_rel_depth, data = dat)
+  abline(0, 1, col = "red")
+  plot(plogis(logit_preds) ~ plogis(logit_rel_depth), data = dat)
+  abline(0, 1, col = "red")
+}
+
+# predictions, even with the training data, not very promising
+pred_foo(gbm_list[[1]], dat = block_tbl$train_dat[[1]])
+pred_foo(gbm_list[[2]], dat = block_tbl$train_dat[[2]])
+pred_foo(gbm_list[[3]], dat = block_tbl$train_dat[[3]])
+
+pred_foo(depth_rf, dat = train_depth)
+pred_foo(depth_rf, dat = test_depth)

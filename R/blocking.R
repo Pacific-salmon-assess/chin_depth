@@ -7,10 +7,10 @@ library(raster)
 library(sf)
 
 depth_dat_raw <- readRDS(
-  here::here("data", "depth_dat_15min.RDS")) 
+  here::here("data", "depth_dat_nobin.RDS")) 
 
 # number of blocks shared among all methods
-n_blocks <- 5
+n_blocks <- 10
 
 set.seed(456)
 
@@ -108,7 +108,7 @@ ind_folds = data.frame(
 
 # check
 left_join(depth_dat_raw, ind_folds, by = "vemco_code")  %>% 
-  dplyr::select(vemco_code, block) %>% 
+  dplyr::select(vemco_code, ind_block) %>% 
   distinct()
 
 
@@ -116,7 +116,7 @@ left_join(depth_dat_raw, ind_folds, by = "vemco_code")  %>%
 
 block_list <- list(space = sp_folds, time = time_folds, individual = ind_folds)
 saveRDS(block_list, 
-        here::here("data", "5block_ids.RDS"))
+        here::here("data", "10block_ids.RDS"))
 
 
 ## COMPARE BLOCKING STRUCTURES -------------------------------------------------
@@ -145,10 +145,10 @@ block_tbl <- tibble(
 ) %>% 
   mutate(
     train_dat = purrr::map(full_dat, function (x) 
-      x %>% filter(!value == "5")
+      x %>% filter(!value == "5") %>% droplevels
       ),
     test_dat = purrr::map(full_dat, function (x) 
-      x %>% filter(value == "5")
+      x %>% filter(value == "5") %>% droplevels
     ),
     depth_recipe = purrr::map(train_dat, function (x) 
       recipe(logit_rel_depth ~ ., 
@@ -189,10 +189,10 @@ if (Sys.info()['sysname'] == "Windows") {
 
 # fit GBMs (random forest substantially slower and only moderately better 
 # performance)
-gbmGrid <-  expand.grid(interaction.depth = c(3, 5, 9),
-                        n.trees = seq(1, 55, by = 5) * 20,
+gbmGrid <-  expand.grid(interaction.depth = c(5, 10), #c(3, 5, 9),
+                        n.trees = seq(20, 350, by = 10),
                         shrinkage = 0.1,
-                        n.minobsinnode = 20)
+                        n.minobsinnode = c(5, 10, 20))
 
 tictoc::tic()
 gbm_list <- purrr::pmap(
@@ -215,8 +215,6 @@ tictoc::toc()
 trellis.par.set(caretTheme())
 purrr::map(gbm_list, plot) 
 
-
-
 pred_foo <- function(mod, dat) {
   preds <- predict(mod, newdata = dat)
   dat$logit_preds <- preds
@@ -232,6 +230,9 @@ pred_foo <- function(mod, dat) {
 pred_foo(gbm_list[[1]], dat = block_tbl$train_dat[[1]])
 pred_foo(gbm_list[[2]], dat = block_tbl$train_dat[[2]])
 pred_foo(gbm_list[[3]], dat = block_tbl$train_dat[[3]])
+
+pred_foo(gbm_list[[3]], dat = block_tbl$test_dat[[3]])
+
 
 pred_foo(depth_rf, dat = train_depth)
 pred_foo(depth_rf, dat = test_depth)

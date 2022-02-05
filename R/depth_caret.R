@@ -167,26 +167,32 @@ tictoc::toc()
 
 # random forest model
 tictoc::tic()
-depth_rf <- train(depth_recipe, 
-                  train_depth %>% dplyr::select(-ind_block),
-                   method = "ranger", 
-                   metric = "RMSE",
-                   maximize = FALSE,
-                   trControl = depth_ctrl,
-                   tuneLength = 6,
-                   num.trees = 500)
+depth$rf <- purrr::map2(
+  depth$train,
+  depth$ctrl,
+  function(x, y) {
+    train(depth_recipe, 
+          x %>% dplyr::select(-ind_block),
+          method = "ranger", 
+          metric = "RMSE",
+          maximize = FALSE,
+          trControl = y,
+          tuneLength = 6,
+          num.trees = 500)
+  }
+)
 tictoc::toc()
 
 
 trellis.par.set(caretTheme())
 purrr::map(depth$gbm, plot)  
-plot(depth_rf)
+purrr::map(depth$rf, plot)  
 
 
 ## compare
 bwplot(resamples(
-  list("GBM" = depth_gbm, 
-       "RF" = depth_rf)),
+  list("GBM" = depth$gbm[[2]], 
+       "RF" = depth$rf[[2]])),
        metric = "RMSE")
 
 
@@ -207,6 +213,9 @@ pred_foo(depth_rf, dat = train_depth)
 
 pred_foo(depth_gbm, dat = test_depth)
 pred_foo(depth_rf, dat = test_depth)
+
+purrr::map2(depth$gbm, depth$train, pred_foo)
+purrr::map2(depth$rf, depth$train, pred_foo)
 
 
 # evaluate patterns

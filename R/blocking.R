@@ -7,7 +7,7 @@ library(raster)
 library(sf)
 
 depth_dat_raw <- readRDS(
-  here::here("data", "depth_dat_nobin.RDS")) 
+  here::here("data", "depth_dat_15min.RDS")) 
 
 # number of blocks shared among all methods
 n_blocks <- 10
@@ -80,12 +80,13 @@ depth_dat_raw$timestamp_f = cut_width(depth_dat_raw$timestamp_n,
 depth_dat_raw$id = paste(depth_dat_raw$vemco_code, depth_dat_raw$timestamp_f,
                          sep = "_")
                          
-# make vector of 5 blocks
+# make vector of blocks
 time_folds = data.frame(
   id = unique(depth_dat_raw$id),
   time_block = sample.int(n_blocks, length(unique(depth_dat_raw$id)), 
                      replace = T)) %>% 
   right_join(., depth_dat_raw %>% dplyr::select(id), by = "id") 
+
 
 # check
 depth_dat_raw$time_block <- as.factor(time_folds$time_block)
@@ -100,7 +101,7 @@ ggplot(depth_dat_raw %>% filter(vemco_code %in% sub_tags)) +
 
 ## INDIVIDUAL BLOCKING ---------------------------------------------------------
 
-# make vector of 5 blocks
+# make vector of blocks
 ind_folds = data.frame(
   vemco_code = unique(depth_dat_raw$vemco_code),
   ind_block = sample.int(n_blocks, length(unique(depth_dat_raw$vemco_code)), 

@@ -142,8 +142,6 @@ saveRDS(depth_dat_null,
         here::here("data", "depth_dat_nobin.RDS"))
 saveRDS(depth_dat_15,
         here::here("data", "depth_dat_15min.RDS"))
-saveRDS(depth_dat_30,
-        here::here("data", "depth_dat_30min.RDS"))
 saveRDS(depth_dat_60,
         here::here("data", "depth_dat_60min.RDS"))
 

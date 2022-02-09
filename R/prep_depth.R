@@ -156,7 +156,7 @@ saveRDS(depth_dat_60,
 depth_dets1 <- depth_raw %>% 
   mutate(
     hour = lubridate::hour(date_time),
-    day = lubridate::yday(date_time),
+    day = lubridate::day(date_time),
     month = lubridate::month(date_time),
     year = lubridate::year(date_time)
   ) #%>% 
@@ -194,11 +194,36 @@ depth_dat_infill <- split(depth_dets1, depth_dets1$receiver) %>%
   bind_rows()
 
 
-# export 
-depth_dets1 %>% 
-  dplyr::select(receiver, hour, day, month, year) %>% 
+# expand depth dets by different covariates and depths
+trim_dets <- depth_dets1 %>% 
+  select(year, month, day, hour, lat = latitude, lon = longitude) %>% 
+  distinct()
+var_list <- c("u", "v", "w", "zooplankton", "rho")
+depth_list <- c(5, 25, 50)
+
+roms_dat <- expand.grid(
+  variable = var_list,
+  depth = depth_list
+) %>% 
+  mutate(
+    depth = ifelse(variable == "w", -999, depth),
+    fac = paste(variable, depth, sep = "_")
+  ) %>% 
   distinct() %>% 
-  write.csv(., here::here("data", "stations_roms_no_infill.csv"),
+  split(., .$fac) %>% 
+  purrr::map(., function (x) {
+    trim_dets %>% 
+      mutate(variable = x$variable,
+             depth = x$depth)
+  }) %>% 
+  bind_rows %>% 
+  mutate(depthFrac = -999) %>% 
+  dplyr::select(year, month, day, hour, variable, lat,
+                lon, depth, depthFrac) 
+  
+
+# export 
+write.csv(roms_dat, here::here("data", "stations_roms_no_infill.csv"),
             row.names = FALSE)
 
 

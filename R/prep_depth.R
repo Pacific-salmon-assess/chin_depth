@@ -12,9 +12,8 @@ stage_dat <- readRDS(here::here("data", "lifestage_df.RDS"))
 # biological data
 chin_dat <- readRDS(
   here::here("data", "acousticOnly_GSI.RDS")) %>% 
-  filter(!is.na(acoustic),
-         !grepl("MAGNET", comment)) %>% 
-  rename(vemco_code = acoustic_year) %>% 
+  filter(!grepl("MAGNET", comment)) %>%
+  dplyr::rename(vemco_code = acoustic_year) %>% 
   left_join(., 
             stage_dat %>% dplyr::select(vemco_code, stage), by = "vemco_code") %>% 
   mutate(
@@ -24,7 +23,8 @@ chin_dat <- readRDS(
 
 # moderately cleaned detections data (includes depth/temperature sensors)
 depth_raw <- readRDS(here::here("data", "detections_all.RDS")) %>%
-  filter(!is.na(depth))
+  filter(!is.na(depth),
+         depth > 0)
 
 
 # function to make hours continuous
@@ -49,10 +49,12 @@ depth_foo <- function(bin_size = 30) {
       # bin depth data by tag, receiver, and hour within a day
       group_by(vemco_code, timestamp_f, receiver, latitude, longitude, 
                station_name, region) %>%
-      summarize(timestamp_n = mean(timestamp) + rnorm(1, 0, 0.01), 
-                date_time = mean(date_time),
-                depth = mean(depth),
-                .groups = "drop") %>%
+      dplyr::summarize(
+        timestamp_n = mean(timestamp) + rnorm(1, 0, 0.01), 
+        date_time = mean(date_time),
+        depth = mean(depth),
+        .groups = "drop"
+      ) %>%
       ungroup()
   } else {
     depth_dat <- depth_raw %>% 
@@ -146,9 +148,61 @@ saveRDS(depth_dat_60,
         here::here("data", "depth_dat_60min.RDS"))
 
 
+## ESTIMATE COVERAGE FOR ROMS --------------------------------------------------
+
+# calculate sample size for ROMS pull assuming hourly bins for each receiver and
+# either continuous (first to last detection) or gappy coverage
+
+depth_dets1 <- depth_raw %>% 
+  mutate(
+    hour = lubridate::hour(date_time),
+    day = lubridate::yday(date_time),
+    month = lubridate::month(date_time),
+    year = lubridate::year(date_time)
+  ) #%>% 
+  # group_by(receiver) %>% 
+  # mutate(
+  #   min_day = min(date_time),#format(round(min(date_time), units = "hours")),
+  #   max_day = max(date_time)#format(round(max(date_time) + 3600, units = "hours"))
+  # ) %>% 
+  # ungroup() %>% 
+  # dplyr::select(
+  #   receiver, hour, day, month, year, latitude, longitude
+  # ) %>% 
+  # distinct()
+
+# infill to make continuous for each receiver based on first/last detection
+depth_dat_infill <- split(depth_dets1, depth_dets1$receiver) %>% 
+  purrr::map(., function (x) {
+    min_day <- format(round(min(x$date_time), units = "hours"))
+    max_day <- format(round(max(x$date_time) + 3600, units = "hours"))
+    time_seq <- seq.POSIXt(as.POSIXct(min_day), as.POSIXct(max_day), 
+                           by = "1 hour")
+    data.frame(
+      date_time = time_seq,
+      receiver = unique(x$receiver),
+      latitude = unique(x$latitude),
+      longitude = unique(x$longitude)
+    ) %>% 
+      mutate(
+        hour = lubridate::hour(date_time),
+        day = lubridate::day(date_time),
+        month = lubridate::month(date_time),
+        year = lubridate::year(date_time)
+      ) 
+  }) %>% 
+  bind_rows()
+
+
+# export 
+depth_dets1 %>% 
+  dplyr::select(receiver, hour, day, month, year) %>% 
+  distinct() %>% 
+  write.csv(., here::here("data", "stations_roms_no_infill.csv"),
+            row.names = FALSE)
+
 
 ## EXPLORATORY FIGS ------------------------------------------------------------
-
 
 # depth_dat <- det_dat %>% 
 #   filter(grepl("V13P", acoustic_type),

@@ -155,7 +155,7 @@ saveRDS(depth_dat_60,
 
 depth_dets1 <- depth_raw %>% 
   mutate(
-    hour = lubridate::hour(date_time),
+    hour = lubridate::hour(date_time) + 1,
     day = lubridate::day(date_time),
     month = lubridate::month(date_time),
     year = lubridate::year(date_time)
@@ -185,7 +185,7 @@ depth_dat_infill <- split(depth_dets1, depth_dets1$receiver) %>%
       longitude = unique(x$longitude)
     ) %>% 
       mutate(
-        hour = lubridate::hour(date_time),
+        hour = lubridate::hour(date_time) + 1,
         day = lubridate::day(date_time),
         month = lubridate::month(date_time),
         year = lubridate::year(date_time)
@@ -206,7 +206,7 @@ roms_dat <- expand.grid(
   depth = depth_list
 ) %>% 
   mutate(
-    depth = ifelse(variable == "w", -999, depth),
+    # depth = ifelse(variable == "w", -999, depth),
     fac = paste(variable, depth, sep = "_")
   ) %>% 
   distinct() %>% 

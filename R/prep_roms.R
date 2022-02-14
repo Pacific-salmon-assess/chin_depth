@@ -89,18 +89,81 @@ write.csv(roms_dat, here::here("data", "stations_roms_no_infill.csv"),
 # survey domain
 
 roms_dat <- read.csv(
-  here::here("data", "stations_roms_no_infill_10Feb22_all.csv"))
+  here::here("data", "stations_roms_no_infill_10Feb22_all.csv")) %>% 
+  filter(!value == "-999", 
+         !variable == "rho") %>% 
+  distinct()
+
+
+# histogram of values by depth and variable
+ggplot(roms_dat) +
+  geom_histogram(aes(x = value)) +
+  facet_grid(variable~depth, scales = "free") +
+  ggsidekick::theme_sleek()
+
 
 # evaluate correlations between depth strata for each variable
 wide_roms <- roms_dat %>% 
-  filter(!value == "-999") %>% 
-  distinct() %>% 
   pivot_wider(names_from = "depth", names_prefix = "depth_",
               values_from = "value") %>% 
-  glimpse()
+  filter(!is.na(depth_25))
 
-# co
-corr <- cor(depth$train[[1]] %>%  dplyr::select(hour:shore_dist))
-ggcorrplot::ggcorrplot(corr)
+corr_list <- wide_roms %>% 
+  split(., .$variable) %>% 
+  purrr::map2(., names(.), function (x, y) {
+    corr <- cor(x %>% select(depth_5, depth_25, depth_50))
+    ggcorrplot::ggcorrplot(corr) +
+      labs(title = y)
+  })
+# u and v highly correlated through depth range; w not correlated at all; 
+# zooplankton shows correlations at 25 m; use 25 for now
+
+roms_25 <- roms_dat %>% 
+  filter(depth == "25") %>% 
+  pivot_wider(names_from = "variable", values_from = "value") %>% 
+  rename(zoo = zooplankton, latitude = lat, longitude = lon, 
+         hour_int = hour) %>% 
+  select(-depth, -depthFrac)
 
 
+# export and join to detections data in prep_depth
+saveRDS(roms_25, here::here("data", "roms_25m_depth.RDS"))
+
+
+## MISC EXPLORATIONS -----------------------------------------------------------
+
+# look at correlations with other explanatory variables
+tt <- readRDS(here::here("data", "depth_dat_nobin.RDS")) %>% 
+  mutate(hour_int = lubridate::hour(date_time) + 1,
+         day = lubridate::day(date_time),
+         month = lubridate::month(date_time),
+         year = lubridate::year(date_time))  %>% 
+  left_join(
+    ., roms_25, 
+    by = c("latitude", "longitude", "day", "month", "year", "hour_int")
+  )
+
+corr_tt <- cor(tt %>% select(latitude:shore_dist, det_day, u:v),
+               use = "complete.obs")
+ggcorrplot::ggcorrplot(corr_tt)
+# correlations negligible
+
+
+length(tt$latitude[!is.na(tt$latitude)])
+length(tt$mean_bathy[!is.na(tt$mean_bathy)])
+length(tt$u[!is.na(tt$u)])
+length(tt$v[!is.na(tt$v)])
+length(tt$zoo[!is.na(tt$zoo)])
+length(tt$w[!is.na(tt$w)])
+# ~3k fewer ROMS detections than other variables; ~30k fewer for zoo (consider
+# removing)
+
+
+# visualize relationships
+tt %>% 
+  select(stage, region_f, pos_depth, rel_depth, u:v) %>% 
+  pivot_longer(cols = c(u:v), names_to = "var", values_to = "value") %>% 
+  ggplot(.) +
+  geom_point(aes(x = value, y = pos_depth, fill = stage), shape = 21) +
+  facet_grid(region_f ~ var, scales = "free") +
+  ggsidekick::theme_sleek()

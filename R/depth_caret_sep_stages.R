@@ -50,26 +50,12 @@ depth_dat_raw <- depth_dat_raw[is.finite(depth_dat_raw$logit_rel_depth), ]
 #   facet_grid(stage~region_f)
 
 
+# models with stage included as factor performed poorly, try fitting to age
+# classes separately
+depth_list <- split(depth_dat_raw, depth_dat_raw$stage)
 
-# add individual block
+
 set.seed(1234)
-ind_folds <- data.frame(
-  vemco_code = unique(depth_dat_raw$vemco_code),
-  ind_block =  sample.int(
-    8, length(unique(depth_dat_raw$vemco_code)), replace = T
-  ) %>% 
-    as.factor()
-)
-
-depth_dat <- depth_dat_raw %>% 
-  left_join(., ind_folds, by = "vemco_code") %>% 
-  dplyr::select(
-    logit_rel_depth, stage, latitude, longitude, 
-    hour, det_day, mean_bathy, mean_slope, shore_dist,
-    u, v, w, ind_block
-  ) 
-
-
 
 # move to tibble, add individual blocks and strip excess vars
 depth <- tibble(

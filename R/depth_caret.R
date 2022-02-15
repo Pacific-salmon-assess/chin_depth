@@ -9,13 +9,13 @@ library(recipes)
 library(gbm)
 
 
-# add block IDs (generated in blocking) (IGNORE AND JUST GENERATE IND FACTORS
-# HERE)
+# add block IDs (generated in blocking) (IGNORE AND JUST GENERATE IND FACTORS)
 # block_list <- readRDS(here::here("data", "10block_ids.RDS"))
 
 depth_dat_raw <- readRDS(
   here::here("data", "depth_dat_15min.RDS")) %>% 
-  mutate(logit_rel_depth = qlogis(rel_depth))
+  mutate(logit_rel_depth = qlogis(rel_depth),
+         stage = as.factor(stage))
 
 
 # check no infinite values in transformed relative depth
@@ -68,34 +68,18 @@ depth_dat <- depth_dat_raw %>%
     hour, det_day, mean_bathy, mean_slope, shore_dist,
     u, v, w, ind_block
   ) 
+# imps <- preProcess(depth_dat, method = "knnImpute")
+# impute_depth <- predict(imps, depth_dat)
+
+# split by individual blocking
+train_depth <- depth_dat %>% filter(!ind_block == "5") %>% droplevels()
+test_depth <- depth_dat %>% filter(ind_block == "5") %>% droplevels()
 
 
-
-# move to tibble, add individual blocks and strip excess vars
-depth <- tibble(
-  stage = names(depth_list),
-  dets = purrr::map(depth_list, function (x, n_blocks = 8) {
-    ind_folds <- data.frame(
-      vemco_code = unique(x$vemco_code),
-      ind_block = sample.int(
-        n_blocks, length(unique(x$vemco_code)), replace = T) %>% 
-        as.factor()
-      ) 
-
-    left_join(x, ind_folds, by = "vemco_code") %>% 
-      dplyr::select(
-        logit_rel_depth, latitude, longitude, 
-        hour, det_day, mean_bathy, mean_slope, shore_dist,
-        ind_block
-      ) 
-  })
-) %>% 
-  # split into training/testing
-  mutate(
-    # subset by individual blocks
-    train = purrr::map(dets, . %>% filter(!ind_block == "5") %>% droplevels),
-    test = purrr::map(dets, . %>% filter(ind_block == "5") %>% droplevels)
-  )
+length(train_depth$u[!is.na(train_depth$u)])
+length(train_depth$v[!is.na(train_depth$v)])
+length(train_depth$zoo[!is.na(train_depth$zoo)])
+length(train_depth$w[!is.na(train_depth$w)])
 
 
 # subset into training/testing based randomly 
@@ -105,34 +89,30 @@ depth <- tibble(
 # train_depth <- rsample::training(dat_split)
 # test_depth <- rsample::testing(dat_split)
 
-
-ggplot(test_depth) +
-  geom_point(aes(x = hour, y = logit_rel_depth), alpha = 0.5)
-
-
   
 ## CARET PRE-PROCESSING --------------------------------------------------------
 
-#check correlations with additional bathy variables
-corr <- cor(depth$train[[1]] %>%  dplyr::select(hour:shore_dist))
-ggcorrplot::ggcorrplot(corr)
-# looks pretty good
-
 
 depth_recipe <- recipe(logit_rel_depth ~ ., 
-                       data = depth$train[[1]] %>% 
+                       data = train_depth %>% 
                          dplyr::select(-ind_block)) %>% 
+  step_impute_knn(all_predictors(), neighbors = 3) %>%
   step_nzv(all_predictors()) %>% 
-  #consider adding PCA for bathymetric features
-  #step_pca(contains("VSA"), prefix = "surf_area_",  threshold = .95) %>% 
   step_dummy(all_predictors(), -all_numeric()) #%>% 
+  #impute missing ROMS values
   # step_center(all_predictors()) %>%
   # step_scale(all_predictors())
 
 # check recipe
-prep(depth_recipe) %>%
-  bake(., new_data = train_depth) %>%
+imp_train <- prep(depth_recipe) %>%
+  bake(., new_data = train_depth %>% 
+         dplyr::select(-ind_block)) %>%
   glimpse()
+
+#check correlations with additional bathy variables
+corr <- cor(imp_train %>%  dplyr::select(latitude:w))
+ggcorrplot::ggcorrplot(corr)
+# looks pretty good
 
 
 ## FIT CARET -------------------------------------------------------------------
@@ -148,7 +128,7 @@ if (Sys.info()['sysname'] == "Windows") {
   doMC::registerDoMC(ncores)
 }
 
-# note does not account for different tags among folds
+# control if using random blocks
 # depth_ctrl <- trainControl(## 10-fold CV
 #   method = "repeatedcv",
 #   number = 10,
@@ -156,69 +136,58 @@ if (Sys.info()['sysname'] == "Windows") {
 #   repeats = 10)
 
 # identify blocks in training data
-depth$ctrl <- purrr::map(depth$train, function (x) {
-  train_folds <- groupKFold(x$ind_block,
-                            k = length(unique(x$ind_block)))
-  trainControl(
-    method="repeatedcv",
-    index = train_folds
-  )
-})
+train_folds <- groupKFold(train_depth$ind_block,
+                          k = length(unique(train_depth$ind_block)))
+depth_ctrl <-   trainControl(
+  method="repeatedcv",
+  index = train_folds
+)
 
 
 # boosted gradient model 
 # adjust grid space for hyperparameter tuning
-gbmGrid <-  expand.grid(interaction.depth = c(2, 5, 10), #c(3, 5, 9),
-                        n.trees = seq(5, 200, by = 5),
+gbm_grid <-  expand.grid(interaction.depth = c(2, 5, 10), #c(3, 5, 9),
+                        n.trees = seq(10, 400, by = 10),
                         shrinkage = 0.1,
                         n.minobsinnode = c(5, 10, 20))
 
 tictoc::tic()
-depth$gbm <- purrr::map2(
-  depth$train,
-  depth$ctrl,
-  function(x, y) {
-    train(depth_recipe, 
-          x %>% dplyr::select(-ind_block),
-          method = "gbm", 
-          metric = "RMSE",
-          maximize = FALSE,
-          # tuneLength = 10,
-          trControl = y,
-          tuneGrid = gbmGrid)
-  }
+depth_gbm <- train(
+  depth_recipe,
+  train_depth %>% dplyr::select(-ind_block),
+  method = "gbm", 
+  metric = "RMSE",
+  maximize = FALSE,
+  # tuneLength = 10,
+  trControl = depth_ctrl,
+  tuneGrid = gbm_grid
 )
 tictoc::toc()
 
 
 # random forest model
 tictoc::tic()
-depth$rf <- purrr::map2(
-  depth$train,
-  depth$ctrl,
-  function(x, y) {
-    train(depth_recipe, 
-          x %>% dplyr::select(-ind_block),
-          method = "ranger", 
-          metric = "RMSE",
-          maximize = FALSE,
-          trControl = y,
-          tuneLength = 6,
-          num.trees = 500)
-  }
+depth_rf <- train(
+  depth_recipe,
+  train_depth %>% dplyr::select(-ind_block),
+  method = "ranger", 
+  metric = "RMSE",
+  maximize = FALSE,
+  tuneLength = 6,
+  trControl = depth_ctrl,
+  num.trees = 500
 )
 tictoc::toc()
 
 
 trellis.par.set(caretTheme())
-purrr::map(depth$gbm, plot)  
-purrr::map(depth$rf, plot)  
-
+plot(depth_gbm)
+plot(depth_rf)
 
 ## compare
 bwplot(resamples(
-  list("GBM" = depth$gbm[[2]], 
-       "RF" = depth$rf[[2]])),
+  list("GBM" = depth_gbm, 
+       "RF" = depth_rf)),
        metric = "RMSE")
 
 
@@ -240,9 +209,6 @@ pred_foo(depth_rf, dat = train_depth)
 pred_foo(depth_gbm, dat = test_depth)
 pred_foo(depth_rf, dat = test_depth)
 
-purrr::map2(depth$gbm, depth$train, pred_foo)
-purrr::map2(depth$rf, depth$train, pred_foo)
-
 
 # evaluate patterns
 library(DALEX)
@@ -251,7 +217,7 @@ library(DALEXtra)
 explainer_gbm <- explain(
   depth_gbm,
   data = dplyr::select(
-    train_depth, hour, det_day, mean_bathy, mean_slope, shore_dist,
+    train_depth, hour, det_day, mean_bathy, mean_slope, shore_dist, u, v, w,
     latitude, longitude, stage
   ),
   y = train_depth$logit_rel_depth,
@@ -260,7 +226,7 @@ explainer_gbm <- explain(
 explainer_rf <- explain(
   depth_gbm,
   data = dplyr::select(
-    train_depth, hour, det_day, mean_bathy, mean_slope, shore_dist,
+    train_depth, hour, det_day, mean_bathy, mean_slope, shore_dist, u, v, w,
     latitude, longitude, stage
   ),
   y = train_depth$logit_rel_depth,
@@ -288,6 +254,9 @@ make_pdp("det_day")
 make_pdp("mean_bathy")
 make_pdp("mean_slope")
 make_pdp("shore_dist")
+make_pdp("u")
+make_pdp("v")
+make_pdp("w")
 make_pdp("latitude")
 make_pdp("longitude")
 

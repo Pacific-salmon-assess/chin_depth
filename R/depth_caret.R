@@ -78,7 +78,7 @@ test_depth <- depth_dat %>% filter(ind_block == "5") %>% droplevels()
 
 length(train_depth$u[!is.na(train_depth$u)])
 length(train_depth$v[!is.na(train_depth$v)])
-length(train_depth$zoo[!is.na(train_depth$zoo)])
+length(train_depth$mean_slope[!is.na(train_depth$mean_slope)])
 length(train_depth$w[!is.na(train_depth$w)])
 
 
@@ -194,14 +194,24 @@ bwplot(resamples(
 # predictions
 pred_foo <- function(mod, dat = test_depth) {
   preds <- predict(mod, newdata = dat)
-  dat$logit_preds <- preds
   
   par(mfrow = c(2, 1))
   plot(logit_preds ~ logit_rel_depth, data = dat)
   abline(0, 1, col = "red")
   plot(plogis(logit_preds) ~ plogis(logit_rel_depth), data = dat)
   abline(0, 1, col = "red")
+  
+  # rmse_out <- sqrt(mean((dat$logit_rel_depth - dat$logit_preds)^2))
+  # rmse_out_real <- sqrt(mean(
+  #   (plogis(dat$logit_rel_depth) - plogis(dat$logit_preds))^2)
+  #   )
+  # paste("rmse link =", rmse_out, "rmse real =", rmse_out_real)
 }
+
+
+rf <- ranger(mpg ~ ., mtcars[1:26, ], quantreg = TRUE)
+pred <- predict(rf, mtcars[27:32, ], type = "quantiles", quantiles = c(0.1, 0.5, 0.9))
+pred$predictions
 
 pred_foo(depth_gbm, dat = train_depth)
 pred_foo(depth_rf, dat = train_depth)
@@ -234,8 +244,10 @@ explainer_rf <- explain(
 )
 
 # variable importance
+pdf(here::here("figs", "depth_ml", "predictor_importance.pdf"))
 plot(feature_importance(explainer_gbm))
 plot(feature_importance(explainer_rf))
+dev.off()
 
 
 # function to visualize profiles
@@ -244,11 +256,14 @@ make_pdp <- function(param) {
   pdp_rf <- model_profile(explainer_rf, N = 400, variables = param)
   rbind(as_tibble(pdp_gbm$agr_profiles), as_tibble(pdp_rf$agr_profiles)) %>%
     ggplot(aes(`_x_`, `_yhat_`, color = `_label_`)) +
-    geom_line() + xlab(param)
+    geom_line() + 
+    xlab(param) + ylab("y_hat (logit rel. depth)") +
+    ggsidekick::theme_sleek()
 }
 
 # TODO: how to optimize visuals (e.g. smooths?)
 # TODO: how to add estimates of uncertainty
+pdf(here::here("figs", "depth_ml", "predictor_profiles.pdf"))
 make_pdp("hour")
 make_pdp("det_day")
 make_pdp("mean_bathy")
@@ -259,59 +274,84 @@ make_pdp("v")
 make_pdp("w")
 make_pdp("latitude")
 make_pdp("longitude")
+dev.off()
+
+
+## 
+pred1 <- data.frame(
+  
+)
+preds <- predict(depth_gbm, newdata = dat)
 
 
 # generate spatial predictions based on bathymetric data
-# TODO: interpolate missing slope estimates (n = 544 of ~20k)
-
 coast <- readRDS(here::here("data", "crop_coast_sf.RDS"))
 
 bath_grid <- readRDS(here::here("data", "pred_bathy_grid.RDS")) %>%
-  filter(!is.na(slope)) %>% 
+  filter(!is.na(slope), 
+         depth < 500) %>% 
   rename(longitude = X, latitude = Y, mean_bathy = depth, mean_slope = slope)
 
 # stratify predictions by non-spatial covariates
-dat <- expand_grid(
+dat_tbl <- expand_grid(
   hour = c(0.5, 12.5),
-  det_day = c(90, 150, 210, 270)
+  # jan 1, apr 1, jul 1, oct 1
+  det_day = c(1, 91, 182, 274),
+  stage = unique(depth_dat$stage),
+  u = 0,
+  v = 0,
+  w = 0
 ) %>% 
   mutate(
+    day = fct_recode(as.factor(hour), "day" = "0.5", "night" = "12.5"),
+    season = fct_recode(as.factor(det_day), "winter" = "1", "spring" = "91",
+                        "summer" = "182", "fall" = "274"),
     # create prediction grid based on fixed covariates
-    pred_grid = purrr::map2(hour, det_day, function (x, y) {
+    pred_grid = purrr::pmap(list(hour, det_day, stage), function (x, y, z) {
       bath_grid %>% 
         mutate(
           hour = x,
-          det_day = y
+          det_day = y,
+          stage = z,
+          u = 0,
+          v = 0,
+          w = 0
         )
     }),
     # generate predictions
     preds = purrr::map(pred_grid, function (x) {
-      dum <- predict(depth_rf, newdata = x)
+      dum <- predict(depth_gbm, newdata = x)
       # calculate actual depth
       bath_grid %>% 
         mutate(
           logit_pred = dum,
           rel_pred = plogis(logit_pred),
           pred = mean_bathy * rel_pred
-        ) %>% 
-        filter(
-          !(pred > 300)
         )
       }
       )
-  )
+  ) 
   
+dat <- dat_tbl %>% 
+  select(stage, day, season, preds) %>% 
+  unnest(cols = preds)
 
-
-ggplot() + 
+pred_depth <- ggplot() + 
   geom_sf(data = coast) +
-  geom_raster(data = dat$preds[[1]], 
+  geom_raster(data = dat %>% filter(day == "day"), 
               aes(x = longitude, y = latitude, fill = pred)) +
   scale_fill_viridis_c() +
-  ggsidekick::theme_sleek()
-ggplot() + 
+  ggsidekick::theme_sleek() +
+  facet_grid(season ~ stage)
+pred_rel_depth <- ggplot() + 
   geom_sf(data = coast) +
-  geom_raster(data = dat$preds[[8]], 
-              aes(x = longitude, y = latitude, fill = pred)) +
+  geom_raster(data = dat %>% filter(day == "day"), 
+              aes(x = longitude, y = latitude, fill = rel_pred)) +
   scale_fill_viridis_c() +
-  ggsidekick::theme_sleek()
+  ggsidekick::theme_sleek() +
+  facet_grid(season ~ stage)
+
+pdf(here::here("figs", "depth_ml", "pred_depth_map.pdf"))
+pred_depth
+pred_rel_depth
+dev.off()

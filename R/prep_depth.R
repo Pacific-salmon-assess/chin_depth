@@ -34,7 +34,6 @@ depth_raw <- readRDS(here::here("data", "detections_all.RDS")) %>%
 roms_dat <- readRDS(here::here("data", "roms_25m_depth.RDS"))
 
 
-
 # function to make hours continuous
 time_foo <- function(x) {
   lubridate::hour(x) + (lubridate::minute(x) / 60) + 

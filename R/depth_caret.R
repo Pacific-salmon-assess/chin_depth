@@ -13,7 +13,7 @@ library(gbm)
 # block_list <- readRDS(here::here("data", "10block_ids.RDS"))
 
 depth_dat_raw <- readRDS(
-  here::here("data", "depth_dat_15min.RDS")) %>% 
+  here::here("data", "depth_dat_nobin.RDS")) %>% 
   mutate(logit_rel_depth = qlogis(rel_depth),
          stage = as.factor(stage))
 
@@ -25,29 +25,40 @@ depth_dat_raw <- depth_dat_raw[is.finite(depth_dat_raw$logit_rel_depth), ]
 
 
 ## basic visualizations
-# ggplot(depth_dat_raw) +
-#   geom_point(aes(x = mean_bathy_c, y = rel_depth))
-# ggplot(depth_dat_raw) +
-#   geom_point(aes(x = day_c, y = rel_depth), alpha = 0.4) +
-#   facet_grid(stage~region_f)
-# ggplot(depth_dat_raw) +
-#   geom_point(aes(x = hour_c, y = rel_depth), alpha = 0.5) +
-#   facet_grid(stage~region_f)
-# ggplot(depth_dat_raw) +
-#     geom_point(aes(x = v, y = rel_depth), alpha = 0.5) +
-#     facet_grid(stage~region_f)
-# ggplot(depth_dat_raw) +
-#   geom_point(aes(x = u, y = rel_depth), alpha = 0.5) +
-#   facet_grid(stage~region_f)
-# ggplot(depth_dat_raw) +
-#   geom_point(aes(x = w, y = rel_depth), alpha = 0.5) +
-#   facet_grid(stage~region_f)
-# ggplot(depth_dat_raw) +
-#   geom_point(aes(x = zoo, y = rel_depth), alpha = 0.5) +
-#   facet_grid(stage~region_f)
-# ggplot(depth_dat_raw) +
-#   geom_boxplot(aes(x = day_night, y = rel_depth)) +
-#   facet_grid(stage~region_f)
+ggplot(depth_dat_raw) +
+  geom_point(aes(x = mean_bathy, y = rel_depth))
+ggplot(depth_dat_raw) +
+  geom_point(aes(x = det_day, y = rel_depth), alpha = 0.4) +
+  facet_grid(stage~region_f)
+ggplot(depth_dat_raw) +
+  geom_point(aes(x = hour, y = rel_depth), alpha = 0.5) +
+  facet_grid(stage~region_f)
+ggplot(depth_dat_raw) +
+    geom_point(aes(x = v, y = rel_depth), alpha = 0.5) +
+    facet_grid(stage~region_f)
+ggplot(depth_dat_raw) +
+  geom_point(aes(x = u, y = rel_depth), alpha = 0.5) +
+  facet_grid(stage~region_f)
+ggplot(depth_dat_raw) +
+  geom_point(aes(x = w, y = rel_depth), alpha = 0.5) +
+  facet_grid(stage~region_f)
+ggplot(depth_dat_raw) +
+  geom_point(aes(x = zoo, y = rel_depth), alpha = 0.5) +
+  facet_grid(stage~region_f)
+ggplot(depth_dat_raw) +
+  geom_boxplot(aes(x = day_night, y = rel_depth)) +
+  facet_grid(stage~region_f)
+
+
+# spatial coverage
+coast_full <- readRDS(here::here("data", "coast_sf.RDS"))
+ggplot() +
+  geom_sf(data = coast_full) +
+  geom_point(data = depth_dat_raw %>% 
+               select(latitude, longitude) %>% 
+               distinct(),
+             aes(x = longitude, y = latitude)
+             )
 
 
 
@@ -180,6 +191,11 @@ depth_rf <- train(
 tictoc::toc()
 
 
+# save models
+saveRDS(depth_gbm, here::here("data", "model_fits", "depth_gbm_nobin.rds"))
+saveRDS(depth_rf, here::here("data", "model_fits", "depth_rf_nobin.rds"))
+
+
 trellis.par.set(caretTheme())
 plot(depth_gbm)
 plot(depth_rf)
@@ -194,6 +210,8 @@ bwplot(resamples(
 # predictions
 pred_foo <- function(mod, dat = test_depth) {
   preds <- predict(mod, newdata = dat)
+  
+  dat$logit_preds <- preds
   
   par(mfrow = c(2, 1))
   plot(logit_preds ~ logit_rel_depth, data = dat)
@@ -277,20 +295,17 @@ make_pdp("longitude")
 dev.off()
 
 
-## 
-pred1 <- data.frame(
-  
-)
-preds <- predict(depth_gbm, newdata = dat)
-
-
 # generate spatial predictions based on bathymetric data
 coast <- readRDS(here::here("data", "crop_coast_sf.RDS"))
 
+ggplot() +
+  geom_sf(data = coast)
+
 bath_grid <- readRDS(here::here("data", "pred_bathy_grid.RDS")) %>%
   filter(!is.na(slope), 
-         depth < 500) %>% 
-  rename(longitude = X, latitude = Y, mean_bathy = depth, mean_slope = slope)
+         depth < 400) %>% 
+  dplyr::rename(longitude = X, latitude = Y, mean_bathy = depth, 
+                mean_slope = slope)
 
 # stratify predictions by non-spatial covariates
 dat_tbl <- expand_grid(
@@ -355,3 +370,34 @@ pdf(here::here("figs", "depth_ml", "pred_depth_map.pdf"))
 pred_depth
 pred_rel_depth
 dev.off()
+
+pred_depth_mat_day <- ggplot() + 
+  geom_sf(data = coast) +
+  geom_raster(data = dat %>% filter(stage == "mature", season == "summer",
+                                    day == "day"), 
+              aes(x = longitude, y = latitude, fill = pred)) +
+  scale_fill_viridis_c() +
+  ggsidekick::theme_sleek() +
+  facet_wrap(~ day)
+
+
+png(here::here("figs", "depth_ml", "pred_depth_imm_season.png"), res = 250, 
+    units = "in", height = 6, width = 8)
+ggplot() + 
+  geom_sf(data = coast) +
+  geom_raster(data = dat %>% filter(stage == "immature", day == "day",
+                                    season %in% c("winter", "summer")), 
+              aes(x = longitude, y = latitude, fill = pred)) +
+  scale_fill_viridis_c() +
+  ggsidekick::theme_sleek() +
+  facet_wrap(~ season)
+dev.off()
+
+
+# bathymetry plot
+ggplot() + 
+  geom_sf(data = coast) +
+  geom_raster(data = bath_grid, 
+              aes(x = longitude, y = latitude, fill = mean_bathy)) +
+  scale_fill_viridis_c() +
+  ggsidekick::theme_sleek()

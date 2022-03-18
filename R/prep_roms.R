@@ -9,7 +9,12 @@ library(tidyverse)
 # moderately cleaned detections data (includes depth/temperature sensors)
 depth_raw <- readRDS(here::here("data", "detections_all.RDS")) %>%
   filter(!is.na(depth),
-         depth > 0)
+         depth > 0) %>% 
+  select(vemco_code, date_time, latitude, longitude)
+
+# B. Hendricks data
+depth_h <- readRDS(here::here("data", "hendricks_depth_dets.RDS")) %>% 
+  select(vemco_code, date_time, latitude, longitude)
 
 
 ## EXPORT STATIONS -------------------------------------------------------------
@@ -17,7 +22,7 @@ depth_raw <- readRDS(here::here("data", "detections_all.RDS")) %>%
 # calculate sample size for ROMS pull assuming hourly bins for each receiver and
 # either continuous (first to last detection) or gappy coverage
 
-depth_dets1 <- depth_raw %>% 
+depth_dets1 <- rbind(depth_raw, depth_h) %>% 
   mutate(
     hour = lubridate::hour(date_time) + 1,
     day = lubridate::day(date_time),
@@ -54,7 +59,7 @@ depth_dets1 <- depth_raw %>%
 trim_dets <- depth_dets1 %>% 
   select(year, month, day, hour, lat = latitude, lon = longitude) %>% 
   distinct()
-var_list <- c("u", "v", "w", "zooplankton", "rho")
+var_list <- c("u", "v", "w", "temp", "zooplankton", "rho")
 depth_list <- c(5, 25, 50)
 
 roms_dat <- expand.grid(
@@ -90,8 +95,9 @@ write.csv(roms_dat, here::here("data", "stations_roms_no_infill.csv"),
 
 roms_dat <- read.csv(
   here::here("data", "stations_roms_no_infill_10Feb22_all.csv")) %>% 
-  filter(!value == "-999", 
-         !variable == "rho") %>% 
+  filter(!value == "-999"#, 
+         # !variable == "rho"
+         ) %>% 
   distinct()
 
 
@@ -120,7 +126,7 @@ corr_list <- wide_roms %>%
 
 roms_25 <- roms_dat %>% 
   filter(depth == "25") %>% 
-  pivot_wider(names_from = "variable", values_from = "value") %>% 
+  pivot_wider(names_from = "variable", values_from = "value") %>%
   rename(zoo = zooplankton, latitude = lat, longitude = lon, 
          hour_int = hour) %>% 
   select(-depth, -depthFrac)
@@ -137,13 +143,14 @@ tt <- readRDS(here::here("data", "depth_dat_nobin.RDS")) %>%
   mutate(hour_int = lubridate::hour(date_time) + 1,
          day = lubridate::day(date_time),
          month = lubridate::month(date_time),
-         year = lubridate::year(date_time))  %>% 
+         year = lubridate::year(date_time))  %>%
+  select(-(u:zoo)) %>% 
   left_join(
     ., roms_25, 
     by = c("latitude", "longitude", "day", "month", "year", "hour_int")
   )
 
-corr_tt <- cor(tt %>% select(latitude:shore_dist, det_day, u:v),
+corr_tt <- cor(tt %>% select(latitude:shore_dist, det_day, u:v, rho),
                use = "complete.obs")
 ggcorrplot::ggcorrplot(corr_tt)
 # correlations negligible
@@ -155,14 +162,15 @@ length(tt$u[!is.na(tt$u)])
 length(tt$v[!is.na(tt$v)])
 length(tt$zoo[!is.na(tt$zoo)])
 length(tt$w[!is.na(tt$w)])
+length(tt$rho[!is.na(tt$rho)])
 # ~3k fewer ROMS detections than other variables; ~30k fewer for zoo (consider
 # removing)
 
 
 # visualize relationships
 tt %>% 
-  select(stage, region_f, pos_depth, rel_depth, u:v) %>% 
-  pivot_longer(cols = c(u:v), names_to = "var", values_to = "value") %>% 
+  select(stage, region_f, pos_depth, rel_depth, u, v, w, zoo, rho) %>%
+  pivot_longer(cols = c(u:rho), names_to = "var", values_to = "value") %>% 
   ggplot(.) +
   geom_point(aes(x = value, y = pos_depth, fill = stage), shape = 21) +
   facet_grid(region_f ~ var, scales = "free") +

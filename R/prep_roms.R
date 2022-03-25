@@ -60,7 +60,10 @@ trim_dets <- depth_dets1 %>%
   select(year, month, day, hour, lat = latitude, lon = longitude) %>% 
   distinct()
 var_list <- c("u", "v", "w", "temp", "zooplankton", "rho")
-depth_list <- c(5, 25, 50)
+# focus on one depth given strong correlations among them
+depth_list <- c(#5, 
+  25#, 50
+  )
 
 roms_dat <- expand.grid(
   variable = var_list,

@@ -45,6 +45,9 @@ ggplot(depth_dat_raw) +
 ggplot(depth_dat_raw) +
   geom_point(aes(x = zoo, y = rel_depth), alpha = 0.5) +
   facet_grid(stage~region_f)
+ggplot(depth_dat_raw %>% filter(!region_f == "columbia")) +
+  geom_point(aes(x = roms_temp, y = rel_depth), alpha = 0.5) +
+  facet_grid(stage~region_f)
 ggplot(depth_dat_raw) +
   geom_boxplot(aes(x = day_night, y = rel_depth)) +
   facet_grid(stage~region_f)

@@ -17,6 +17,7 @@ knitr-cache
 .RData
 .RHistory
 hake-example.tex
+R/hidden/
 
 myNotes.*
 #outputs/

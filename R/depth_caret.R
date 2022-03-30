@@ -1,7 +1,6 @@
 ### Depth Models GBM via Caret
 ## Jan. 25, 2021
 
-
 library(plyr)
 library(tidyverse)
 library(caret)
@@ -25,8 +24,10 @@ depth_dat_raw <- depth_dat_raw[is.finite(depth_dat_raw$logit_rel_depth), ]
 
 
 ## basic visualizations
+pdf(here::here("figs", "raw_scatter.pdf"), width = 9, height = 5)
 ggplot(depth_dat_raw) +
-  geom_point(aes(x = mean_bathy, y = rel_depth))
+  geom_point(aes(x = mean_bathy, y = rel_depth), alpha = 0.4) +
+  facet_grid(stage~region_f)
 ggplot(depth_dat_raw) +
   geom_point(aes(x = det_day, y = rel_depth), alpha = 0.4) +
   facet_grid(stage~region_f)
@@ -51,18 +52,7 @@ ggplot(depth_dat_raw %>% filter(!region_f == "columbia")) +
 ggplot(depth_dat_raw) +
   geom_boxplot(aes(x = day_night, y = rel_depth)) +
   facet_grid(stage~region_f)
-
-
-# spatial coverage
-coast_full <- readRDS(here::here("data", "coast_sf.RDS"))
-ggplot() +
-  geom_sf(data = coast_full) +
-  geom_point(data = depth_dat_raw %>% 
-               select(latitude, longitude) %>% 
-               distinct(),
-             aes(x = longitude, y = latitude)
-             )
-
+dev.off()
 
 
 # add individual block
@@ -80,7 +70,7 @@ depth_dat <- depth_dat_raw %>%
   dplyr::select(
     logit_rel_depth, stage, latitude, longitude, 
     hour, det_day, mean_bathy, mean_slope, shore_dist,
-    u, v, w, ind_block
+    u, v, w, roms_temp, ind_block
   ) 
 # imps <- preProcess(depth_dat, method = "knnImpute")
 # impute_depth <- predict(imps, depth_dat)
@@ -94,6 +84,7 @@ length(train_depth$u[!is.na(train_depth$u)])
 length(train_depth$v[!is.na(train_depth$v)])
 length(train_depth$mean_slope[!is.na(train_depth$mean_slope)])
 length(train_depth$w[!is.na(train_depth$w)])
+length(train_depth$roms_temp[!is.na(train_depth$roms_temp)])
 
 
 # subset into training/testing based randomly 
@@ -105,7 +96,6 @@ length(train_depth$w[!is.na(train_depth$w)])
 
   
 ## CARET PRE-PROCESSING --------------------------------------------------------
-
 
 depth_recipe <- recipe(logit_rel_depth ~ ., 
                        data = train_depth %>% 
@@ -119,12 +109,13 @@ depth_recipe <- recipe(logit_rel_depth ~ .,
 
 # check recipe
 imp_train <- prep(depth_recipe) %>%
-  bake(., new_data = train_depth %>% 
+  bake(., 
+       new_data = train_depth %>% 
          dplyr::select(-ind_block)) %>%
   glimpse()
 
 #check correlations with additional bathy variables
-corr <- cor(imp_train %>%  dplyr::select(latitude:w))
+corr <- cor(imp_train %>% dplyr::select(latitude:w, roms_temp))
 ggcorrplot::ggcorrplot(corr)
 # looks pretty good
 
@@ -230,15 +221,23 @@ pred_foo <- function(mod, dat = test_depth) {
 }
 
 
-rf <- ranger(mpg ~ ., mtcars[1:26, ], quantreg = TRUE)
-pred <- predict(rf, mtcars[27:32, ], type = "quantiles", quantiles = c(0.1, 0.5, 0.9))
-pred$predictions
+# one option for quantiles using ranger (ask SA about best options)
+# rf <- ranger(mpg ~ ., mtcars[1:26, ], quantreg = TRUE)
+# pred <- predict(rf, mtcars[27:32, ], type = "quantiles", 
+#                 quantiles = c(0.1, 0.5, 0.9))
+# pred$predictions
+
 
 pred_foo(depth_gbm, dat = train_depth)
 pred_foo(depth_rf, dat = train_depth)
 
 pred_foo(depth_gbm, dat = test_depth)
 pred_foo(depth_rf, dat = test_depth)
+
+png(here::here("figs", "depth_ml", "predictive_performance_nobin_gbm.png"),
+    height = 8, width = 4, res = 200, units = "in")
+pred_foo(depth_rf, dat = test_depth)
+dev.off()
 
 
 # evaluate patterns
@@ -248,7 +247,8 @@ library(DALEXtra)
 explainer_gbm <- explain(
   depth_gbm,
   data = dplyr::select(
-    train_depth, hour, det_day, mean_bathy, mean_slope, shore_dist, u, v, w,
+    train_depth, hour, det_day, mean_bathy, mean_slope, shore_dist, u, v, w, 
+    roms_temp,
     latitude, longitude, stage
   ),
   y = train_depth$logit_rel_depth,
@@ -257,7 +257,8 @@ explainer_gbm <- explain(
 explainer_rf <- explain(
   depth_gbm,
   data = dplyr::select(
-    train_depth, hour, det_day, mean_bathy, mean_slope, shore_dist, u, v, w,
+    train_depth, hour, det_day, mean_bathy, mean_slope, shore_dist, u, v, w, 
+    roms_temp,
     latitude, longitude, stage
   ),
   y = train_depth$logit_rel_depth,
@@ -265,7 +266,7 @@ explainer_rf <- explain(
 )
 
 # variable importance
-pdf(here::here("figs", "depth_ml", "predictor_importance.pdf"))
+pdf(here::here("figs", "depth_ml", "predictor_importance_nobin.pdf"))
 plot(feature_importance(explainer_gbm))
 plot(feature_importance(explainer_rf))
 dev.off()
@@ -293,6 +294,7 @@ make_pdp("shore_dist")
 make_pdp("u")
 make_pdp("v")
 make_pdp("w")
+make_pdp("roms_temp")
 make_pdp("latitude")
 make_pdp("longitude")
 dev.off()

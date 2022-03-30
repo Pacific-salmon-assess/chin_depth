@@ -99,7 +99,8 @@ write.csv(roms_dat, here::here("data", "stations_roms_no_infill.csv"),
 # with one another
 
 roms_dat <- read.csv(
-  here::here("data", "stations_roms_no_infill_25mar22_all.csv")) %>% 
+  # here::here("data", "stations_roms_no_infill_25mar22_all.csv")) %>% 
+  here::here("data", "stations_roms_no_infill_10feb22_all.csv")) %>%
   filter(!value == "-999"#, 
          # !variable == "rho"
          ) %>% 
@@ -114,18 +115,18 @@ ggplot(roms_dat) +
 
 
 # evaluate correlations between depth strata for each variable
-# wide_roms <- roms_dat %>% 
-#   pivot_wider(names_from = "depth", names_prefix = "depth_",
-#               values_from = "value") %>% 
-#   filter(!is.na(depth_25))
-# 
-# corr_list <- wide_roms %>% 
-#   split(., .$variable) %>% 
-#   purrr::map2(., names(.), function (x, y) {
-#     corr <- cor(x %>% select(depth_5, depth_25, depth_50))
-#     ggcorrplot::ggcorrplot(corr) +
-#       labs(title = y)
-#   })
+wide_roms <- roms_dat %>%
+  pivot_wider(names_from = "depth", names_prefix = "depth_",
+              values_from = "value") %>%
+  filter(!is.na(depth_25))
+
+corr_list <- wide_roms %>%
+  split(., .$variable) %>%
+  purrr::map2(., names(.), function (x, y) {
+    corr <- cor(x %>% select(depth_5, depth_25, depth_50))
+    ggcorrplot::ggcorrplot(corr) +
+      labs(title = y)
+  })
 # u and v highly correlated through depth range; w not correlated at all; 
 # zooplankton shows correlations at 25 m; use 25 for now
 

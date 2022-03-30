@@ -247,6 +247,7 @@ pred_foo(depth_rf, dat = test_depth)
 dev.off()
 
 
+
 # evaluate patterns
 library(DALEX)
 library(DALEXtra)
@@ -272,6 +273,15 @@ explainer_rf <- explain(
   label = "random forest"
 )
 
+# check residuals
+gbm_hist <- DALEX::model_performance(explainer_gbm)
+rf_hist <- DALEX::model_performance(explainer_rf) 
+
+png(here::here("figs", "depth_ml", "hist_resids_15min.png"))
+plot(rf_hist, gbm_hist, geom = "histogram")
+dev.off()
+
+
 # variable importance
 png(here::here("figs", "depth_ml", "predictor_importance_15min_gbm.png"))
 plot(feature_importance(explainer_gbm))
@@ -281,16 +291,16 @@ plot(feature_importance(explainer_rf))
 dev.off()
 
 
-# function to visualize profiles
-make_pdp <- function(param) {
-  pdp_gbm <- model_profile(explainer_gbm, N = 400, variables = param)
-  pdp_rf <- model_profile(explainer_rf, N = 400, variables = param)
-  rbind(as_tibble(pdp_gbm$agr_profiles), as_tibble(pdp_rf$agr_profiles)) %>%
-    ggplot(aes(`_x_`, `_yhat_`, color = `_label_`)) +
-    geom_line() + 
-    xlab(param) + ylab("y_hat (logit rel. depth)") +
-    ggsidekick::theme_sleek()
-}
+# function to visualize profiles (replaced with standard plots below)
+# make_pdp <- function(param) {
+#   pdp_gbm <- model_profile(explainer_gbm, N = 400, variables = param)
+#   pdp_rf <- model_profile(explainer_rf, N = 400, variables = param)
+#   rbind(as_tibble(pdp_gbm$agr_profiles), as_tibble(pdp_rf$agr_profiles)) %>%
+#     ggplot(aes(`_x_`, `_yhat_`, color = `_label_`)) +
+#     geom_line() + 
+#     xlab(param) + ylab("y_hat (logit rel. depth)") +
+#     ggsidekick::theme_sleek()
+# }
 
 # TODO: how to optimize visuals (e.g. smooths?)
 # TODO: how to add estimates of uncertainty
@@ -317,37 +327,52 @@ bath_grid <- readRDS(here::here("data", "pred_bathy_grid.RDS")) %>%
   dplyr::rename(longitude = X, latitude = Y, mean_bathy = depth, 
                 mean_slope = slope)
 
+# calculate mean roms_variables for different seasons (using monthly averages)
+roms_month_means <- roms_dat %>% 
+  filter(month %in% c(1, 4, 7, 10)) %>% 
+  mutate(month = as.factor(as.character(month))) %>% 
+  group_by(month) %>% 
+  dplyr::summarize(
+    u = mean(u, na.rm = T),
+    roms_temp = mean(roms_temp, na.rm = T),
+    v = mean(v, na.rm = T),
+    w = mean(w, na.rm = T)
+    )
+
 # stratify predictions by non-spatial covariates
 dat_tbl <- expand_grid(
   hour = c(0.5, 12.5),
   # jan 1, apr 1, jul 1, oct 1
   det_day = c(1, 91, 182, 274),
-  stage = unique(depth_dat$stage),
-  u = 0,
-  v = 0,
-  w = 0
+  stage = unique(depth_dat$stage)#,
+  # replace with seasonal means 
+  # u = 0,
+  # v = 0,
+  # w = 0
 ) %>% 
   mutate(
     day = fct_recode(as.factor(hour), "day" = "0.5", "night" = "12.5"),
     season = fct_recode(as.factor(det_day), "winter" = "1", "spring" = "91",
                         "summer" = "182", "fall" = "274"),
+    month = factor(as.factor(det_day), labels = c("1", "4", "7", "10")),
     # create prediction grid based on fixed covariates
-    pred_grid = purrr::pmap(list(hour, det_day, stage), function (x, y, z) {
-      bath_grid %>% 
-        mutate(
-          hour = x,
-          det_day = y,
-          stage = z,
-          u = 0,
-          v = 0,
-          w = 0
-        )
-    }),
+    pred_grid = purrr::pmap(
+      list(month, hour, det_day, stage),
+      function (w, x, y, z) {
+        bath_grid %>%
+          mutate(
+            month = w,
+            hour = x,
+            det_day = y,
+            stage = z) %>%
+          left_join(., roms_month_means, by = "month")
+      }
+    ),
     # generate predictions
     preds = purrr::map(pred_grid, function (x) {
-      dum <- predict(depth_gbm, newdata = x)
+      dum <- predict(depth_rf, newdata = x)
       # calculate actual depth
-      bath_grid %>% 
+      bath_grid %>%
         mutate(
           logit_pred = dum,
           rel_pred = plogis(logit_pred),
@@ -381,15 +406,16 @@ pred_depth
 pred_rel_depth
 dev.off()
 
-pred_depth_mat_day <- ggplot() + 
+png(here::here("figs", "depth_ml", "pred_depth_mat_imm.png"), res = 250, 
+    units = "in", height = 6, width = 8)
+ggplot() + 
   geom_sf(data = coast) +
-  geom_raster(data = dat %>% filter(stage == "mature", season == "summer",
-                                    day == "day"), 
+  geom_raster(data = dat %>% filter(season %in% c("summer")), 
               aes(x = longitude, y = latitude, fill = pred)) +
   scale_fill_viridis_c() +
   ggsidekick::theme_sleek() +
-  facet_wrap(~ day)
-
+  facet_grid(stage~day)
+dev.off()
 
 png(here::here("figs", "depth_ml", "pred_depth_imm_season.png"), res = 250, 
     units = "in", height = 6, width = 8)

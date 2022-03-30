@@ -12,7 +12,7 @@ library(gbm)
 # block_list <- readRDS(here::here("data", "10block_ids.RDS"))
 
 depth_dat_raw <- readRDS(
-  here::here("data", "depth_dat_nobin.RDS")) %>% 
+  here::here("data", "depth_dat_15min.RDS")) %>% 
   mutate(logit_rel_depth = qlogis(rel_depth),
          stage = as.factor(stage))
 
@@ -80,6 +80,7 @@ train_depth <- depth_dat %>% filter(!ind_block == "5") %>% droplevels()
 test_depth <- depth_dat %>% filter(ind_block == "5") %>% droplevels()
 
 
+# evaluate prevalence of additional vars
 length(train_depth$u[!is.na(train_depth$u)])
 length(train_depth$v[!is.na(train_depth$v)])
 length(train_depth$mean_slope[!is.na(train_depth$mean_slope)])
@@ -186,8 +187,8 @@ tictoc::toc()
 
 
 # save models
-saveRDS(depth_gbm, here::here("data", "model_fits", "depth_gbm_nobin.rds"))
-saveRDS(depth_rf, here::here("data", "model_fits", "depth_rf_nobin.rds"))
+saveRDS(depth_gbm, here::here("data", "model_fits", "depth_gbm_15min.rds"))
+saveRDS(depth_rf, here::here("data", "model_fits", "depth_rf_15min.rds"))
 
 
 trellis.par.set(caretTheme())
@@ -203,14 +204,15 @@ bwplot(resamples(
 
 # predictions
 pred_foo <- function(mod, dat = test_depth) {
-  preds <- predict(mod, newdata = dat)
+  trim_dat <- dat #%>% sample_n(1000)
+  preds <- predict(mod, newdata = trim_dat)
   
-  dat$logit_preds <- preds
+  trim_dat$logit_preds <- preds
   
   par(mfrow = c(2, 1))
-  plot(logit_preds ~ logit_rel_depth, data = dat)
+  plot(logit_preds ~ logit_rel_depth, data = trim_dat)
   abline(0, 1, col = "red")
-  plot(plogis(logit_preds) ~ plogis(logit_rel_depth), data = dat)
+  plot(plogis(logit_preds) ~ plogis(logit_rel_depth), data = trim_dat)
   abline(0, 1, col = "red")
   
   # rmse_out <- sqrt(mean((dat$logit_rel_depth - dat$logit_preds)^2))
@@ -234,7 +236,12 @@ pred_foo(depth_rf, dat = train_depth)
 pred_foo(depth_gbm, dat = test_depth)
 pred_foo(depth_rf, dat = test_depth)
 
-png(here::here("figs", "depth_ml", "predictive_performance_nobin_gbm.png"),
+png(here::here("figs", "depth_ml", "predictive_performance_15min_gbm.png"),
+    height = 8, width = 4, res = 200, units = "in")
+pred_foo(depth_gbm, dat = test_depth)
+dev.off()
+
+png(here::here("figs", "depth_ml", "predictive_performance_15min_rf.png"),
     height = 8, width = 4, res = 200, units = "in")
 pred_foo(depth_rf, dat = test_depth)
 dev.off()
@@ -255,7 +262,7 @@ explainer_gbm <- explain(
   label = "gbm"
 )
 explainer_rf <- explain(
-  depth_gbm,
+  depth_rf,
   data = dplyr::select(
     train_depth, hour, det_day, mean_bathy, mean_slope, shore_dist, u, v, w, 
     roms_temp,
@@ -266,8 +273,10 @@ explainer_rf <- explain(
 )
 
 # variable importance
-pdf(here::here("figs", "depth_ml", "predictor_importance_nobin.pdf"))
+png(here::here("figs", "depth_ml", "predictor_importance_15min_gbm.png"))
 plot(feature_importance(explainer_gbm))
+dev.off()
+png(here::here("figs", "depth_ml", "predictor_importance_15min_rf.png"))
 plot(feature_importance(explainer_rf))
 dev.off()
 
@@ -285,18 +294,14 @@ make_pdp <- function(param) {
 
 # TODO: how to optimize visuals (e.g. smooths?)
 # TODO: how to add estimates of uncertainty
-pdf(here::here("figs", "depth_ml", "predictor_profiles.pdf"))
-make_pdp("hour")
-make_pdp("det_day")
-make_pdp("mean_bathy")
-make_pdp("mean_slope")
-make_pdp("shore_dist")
-make_pdp("u")
-make_pdp("v")
-make_pdp("w")
-make_pdp("roms_temp")
-make_pdp("latitude")
-make_pdp("longitude")
+pdp_rf <- model_profile(explainer_rf_real, type = "partial", groups = "stage")
+pdp_gbm <- model_profile(explainer_rf_real, type = "partial", groups = "stage")
+
+png(here::here("figs", "depth_ml", "predictor_profiles_15min_rf.png"))
+plot(pdp_rf, geom = "profiles")
+dev.off()
+png(here::here("figs", "depth_ml", "predictor_profiles_15min_gbm.png"))
+plot(pdp_gbm, geom = "profiles")
 dev.off()
 
 

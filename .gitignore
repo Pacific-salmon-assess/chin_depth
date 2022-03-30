@@ -18,6 +18,7 @@ knitr-cache
 .RHistory
 hake-example.tex
 R/hidden/
+data/model_fits/
 
 myNotes.*
 #outputs/

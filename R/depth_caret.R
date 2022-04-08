@@ -324,8 +324,7 @@ ggplot() +
 bath_grid <- readRDS(here::here("data", "pred_bathy_grid.RDS")) %>%
   filter(!is.na(slope), 
          depth < 400) %>% 
-  dplyr::rename(longitude = X, latitude = Y, mean_bathy = depth, 
-                mean_slope = slope)
+  dplyr::rename(mean_bathy = depth, mean_slope = slope)
 
 # calculate mean roms_variables for different seasons (using monthly averages)
 roms_month_means <- roms_dat %>% 

@@ -90,18 +90,22 @@ model_tbl <- expand.grid(
 add_data <- function(response, stage_dat) {
   # select dataset
   if (stage_dat == "integrated") {
-    train_dum <- train_depth
-    test_dum <- test_depth
+    train_dum <- train_depth %>% 
+      dplyr::select(-ind_block)
+    test_dum <- test_depth %>% 
+      dplyr::select(-ind_block)
   } 
   if (stage_dat %in% c("mature", "immature")) {
-    train_dum <- stage_foo(train_depth, stage = stage_dat)
-    test_dum <- stage_foo(test_depth, stage = stage_dat)
+    train_dum <- stage_foo(train_depth, stage = stage_dat) %>% 
+      dplyr::select(-ind_block)
+    test_dum <- stage_foo(test_depth, stage = stage_dat) %>% 
+      dplyr::select(-ind_block)
   }
   
   # subset based on response
   list(
-    train = train_dum %>% select(response, latitude:ind_block),
-    test = test_dum %>% select(response, latitude:ind_block)
+    train = train_dum %>% select(depth_var = response, latitude:ind_block),
+    test = test_dum %>% select(depth_var = response, latitude:ind_block)
   )
 }
 
@@ -110,4 +114,23 @@ dum <- map2(model_tbl$response %>% as.character(),
             .f = add_data)
 model_tbl$train_data <- map(dum, function (x) x$train)
 model_tbl$test_data <- map(dum, function (x) x$test)
+
+## add recipe 
+model_tbl$recipe <- map2(
+  model_tbl$train_data,
+  function (x) {
+    dum_in <- x %>% dplyr::select(-ind_block)
+    
+    recipe(depth_var ~ ., data = x) %>% 
+      step_impute_knn(all_predictors(), neighbors = 3) %>%
+      step_nzv(all_predictors()) %>% 
+      step_dummy(all_predictors(), -all_numeric())
+})
+depth_recipe <- recipe(logit_rel_depth ~ ., 
+                       data = train_depth %>% 
+                         dplyr::select(-ind_block)) %>% 
+  step_impute_knn(all_predictors(), neighbors = 3) %>%
+  step_nzv(all_predictors()) %>% 
+  step_dummy(all_predictors(), -all_numeric())
+
 

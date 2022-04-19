@@ -172,8 +172,8 @@ fit_foo <- function(model, recipe, train_data) {
   if (model == "rf") {
     # iterate over different number of trees
     fits <- vector(length = length(rf_grid$n.trees), mode = "list")
-    names(fit_list) <- paste("trees_", rf_grid$n.trees, sep = "")
-    for (i in seq_along(fit_list)) {
+    names(fits) <- paste("trees_", rf_grid$n.trees, sep = "")
+    for (i in seq_along(fits)) {
       fits[[i]] <- train(
         recipe,
         train_data %>% dplyr::select(-ind_block),
@@ -194,27 +194,34 @@ fit_foo <- function(model, recipe, train_data) {
       paste("trees_", ., sep = "")
     
     out <- list(results = fit_results,
-         top_model = fit_list[[best_trees]]$finalModel)
+         top_model = fits[[best_trees]]$finalModel)
   }
   return(out)
 }
 
-tt <- fit_foo(model = model_tbl$model_type[[1]],
-              recipe = model_tbl$recipe[[1]],
-              train_data = model_tbl$train_data[[1]])
 
-
-## fit models (separately)\
+## fit models (separately)
 gbm_tbl <- model_tbl %>% filter(model_type == "gbm")
 gbm_list <- pmap(list("gbm",
                       gbm_tbl$recipe,
                       gbm_tbl$train_data),
                  .f = fit_foo)
 names(gbm_list) <- gbm_tbl$response
-saveRDS(gbm_list, here::here("data", "gbm_model_comparison.rds"))
+saveRDS(gbm_list, here::here("data", "model_fits", "gbm_model_comparison.rds"))
+gbm_list <- readRDS(here::here("data", "model_fits", "gbm_model_comparison.rds"))
 
 
-# performance table
+rf_tbl <- model_tbl %>% filter(model_type == "rf")
+rf_list <- pmap(list("rf",
+                      rf_tbl$recipe,
+                      rf_tbl$train_data),
+                 .f = fit_foo)
+names(rf_list) <- rf_tbl$response
+saveRDS(rf_list, here::here("data", "model_fits", "rf_model_comparison.rds"))
+rf_list <- readRDS(here::here("data", "model_fits", "rf_model_comparison.rds"))
+
+
+# performance tables and figures
 gbm_dat <- map2(names(gbm_list), gbm_list, function (name, x) {
   x$results %>% 
     mutate(response = name)
@@ -225,28 +232,46 @@ ggplot(gbm_dat) +
                  shape = as.factor(shrinkage))) +
   facet_grid(response~n.minobsinnode, scales = "free_y")
 
-
-
-purrr::map2(gbm_list, gbm_tbl$response, function (x) {
+rf_dat <- map2(names(rf_list), rf_list, function (name, x) {
   x$results %>% 
-    mutate(resp = y)
+    mutate(response = name)
 }) %>% 
-  bind_rows() %>% 
-  glimpse()
-
-rf_tbl <- model_tbl %>% filter(model_type == "rf")
-rf_list <- pmap(list("rf",
-                      rf_tbl$recipe,
-                      rf_tbl$train_data),
-                 .f = fit_foo)
+  bind_rows() 
+ggplot(rf_dat) +
+  geom_point(aes(x = as.factor(mtry), y = RMSE, color = splitrule,
+                 shape = as.factor(min.node.size))) +
+  facet_grid(response~n_trees, scales = "free_y")
 
 
-# predictions
-preds <- predict(tt$top_model, 
-                 newdata = imp_train %>%
-                   select(-depth_var))
+# add models to tbl
+rf_tbl$top_model <- map(rf_list, function (x) x$top_model)
+gbm_tbl$top_model <- map(gbm_list, function (x) x$top_model) 
+model_tbl <- rbind(rf_tbl, gbm_tbl)
 
-plot(preds ~ imp_train$depth_var, alpha = 0.4)
+# calculate RMSE relative to observations in real space
+real_train <- rf_tbl$train_data[[3]]
+rmse_foo <- function(mod_in,
+                     space = c("logit_rel_depth", "rel_depth", "depth"), 
+                     model_type) {
+  if (model_type == "rf") {
+    preds <- mod_in$predictions  
+  } else if (model_type == "gbm") {
+    # note that need to apply recipe to training data before using 
+    preds <- predict(mod_in,
+                     newdata = imp_train %>% select(-depth_var))
+  }
+  if (space == "logit_rel_depth") {
+    preds <- plogis(preds)
+  }
+  if (space %in% c("logit_rel_depth", "rel_depth")) {
+    preds <- preds * real_train$mean_bathy
+  }
+  Metrics::rmse(real_train$depth_var, preds)
+}
 
+pmap(list(model_tbl$top_model, model_tbl$response, model_tbl$model_type), 
+     rmse_foo)
+
+rmse_foo(rf_tbl$top_model[[3]], "depth", "rf")
 
 ##

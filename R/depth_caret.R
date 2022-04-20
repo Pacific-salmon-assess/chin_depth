@@ -1,5 +1,7 @@
-### Depth Models GBM via Caret
+### Depth Models via Caret
 ## Jan. 25, 2021
+## Focus on random forest models with depth as response variable and less than 
+## 200 trees after comparison in depth_caret_comparison.R ()
 
 library(plyr)
 library(tidyverse)
@@ -12,7 +14,7 @@ library(gbm)
 # block_list <- readRDS(here::here("data", "10block_ids.RDS"))
 
 depth_dat_raw <- readRDS(
-  here::here("data", "depth_dat_15min.RDS")) %>% 
+  here::here("data", "depth_dat_nobin.RDS")) %>% 
   mutate(logit_rel_depth = qlogis(rel_depth),
          stage = as.factor(stage))
 
@@ -68,7 +70,7 @@ ind_folds <- data.frame(
 depth_dat <- depth_dat_raw %>% 
   left_join(., ind_folds, by = "vemco_code") %>% 
   dplyr::select(
-    logit_rel_depth, stage, latitude, longitude, 
+    depth = pos_depth, stage, utm_x, utm_y, 
     hour, det_day, mean_bathy, mean_slope, shore_dist,
     u, v, w, roms_temp, ind_block
   ) 
@@ -98,13 +100,13 @@ length(train_depth$roms_temp[!is.na(train_depth$roms_temp)])
   
 ## CARET PRE-PROCESSING --------------------------------------------------------
 
-depth_recipe <- recipe(logit_rel_depth ~ ., 
+depth_recipe <- recipe(depth ~ ., 
                        data = train_depth %>% 
                          dplyr::select(-ind_block)) %>% 
+  #impute missing ROMS values
   step_impute_knn(all_predictors(), neighbors = 3) %>%
   step_nzv(all_predictors()) %>% 
   step_dummy(all_predictors(), -all_numeric()) #%>% 
-  #impute missing ROMS values
   # step_center(all_predictors()) %>%
   # step_scale(all_predictors())
 
@@ -116,7 +118,7 @@ imp_train <- prep(depth_recipe) %>%
   glimpse()
 
 #check correlations with additional bathy variables
-corr <- cor(imp_train %>% dplyr::select(latitude:w, roms_temp))
+corr <- cor(imp_train %>% dplyr::select(utm_x:roms_temp))
 ggcorrplot::ggcorrplot(corr)
 # looks pretty good
 
@@ -152,43 +154,62 @@ depth_ctrl <-   trainControl(
 
 # boosted gradient model 
 # adjust grid space for hyperparameter tuning
-gbm_grid <-  expand.grid(interaction.depth = c(2, 5, 10), #c(3, 5, 9),
-                        n.trees = seq(10, 400, by = 10),
-                        shrinkage = 0.1,
-                        n.minobsinnode = c(5, 10, 20))
-
-tictoc::tic()
-depth_gbm <- train(
-  depth_recipe,
-  train_depth %>% dplyr::select(-ind_block),
-  method = "gbm", 
-  metric = "RMSE",
-  maximize = FALSE,
-  # tuneLength = 10,
-  trControl = depth_ctrl,
-  tuneGrid = gbm_grid
-)
-tictoc::toc()
+# gbm_grid <-  expand.grid(interaction.depth = c(2, 5, 10), #c(3, 5, 9),
+#                         n.trees = seq(10, 400, by = 10),
+#                         shrinkage = 0.1,
+#                         n.minobsinnode = c(5, 10, 20))
+# 
+# tictoc::tic()
+# depth_gbm <- train(
+#   depth_recipe,
+#   train_depth %>% dplyr::select(-ind_block),
+#   method = "gbm", 
+#   metric = "RMSE",
+#   maximize = FALSE,
+#   # tuneLength = 10,
+#   trControl = depth_ctrl,
+#   tuneGrid = gbm_grid
+# )
+# tictoc::toc()
 
 
 # random forest model
 tictoc::tic()
-depth_rf <- train(
-  depth_recipe,
-  train_depth %>% dplyr::select(-ind_block),
-  method = "ranger", 
-  metric = "RMSE",
-  maximize = FALSE,
-  tuneLength = 6,
-  trControl = depth_ctrl,
-  num.trees = 500
-)
+# depth_rf <- train(
+#   depth_recipe,
+#   train_depth %>% dplyr::select(-ind_block),
+#   method = "ranger", 
+#   metric = "RMSE",
+#   maximize = FALSE,
+#   tuneLength = 6,
+#   trControl = depth_ctrl,
+#   num.trees = 500
+# )
+tree_seq <- seq(50, 200, by = 50)
+fits <- vector(length = length(tree_seq), mode = "list")
+names(fits) <- paste("trees_", tree_seq, sep = "")
+for (i in seq_along(fits)) {
+  fits[[i]] <- train(
+    depth_recipe,
+    train_depth %>% dplyr::select(-ind_block),
+    method = "ranger", 
+    metric = "RMSE",
+    maximize = FALSE,
+    tuneLength = 10,
+    trControl = depth_ctrl,
+    num.trees = tree_seq[i]
+  ) 
+  fits[[i]]$results$n_trees <- tree_seq[i]
+}
 tictoc::toc()
 
 
+fit_results <- purrr::map(fits, function (x) x$results) %>% 
+  bind_rows()
+
 # save models
-saveRDS(depth_gbm, here::here("data", "model_fits", "depth_gbm_15min.rds"))
-saveRDS(depth_rf, here::here("data", "model_fits", "depth_rf_15min.rds"))
+# saveRDS(depth_gbm, here::here("data", "model_fits", "depth_gbm_15min.rds"))
+saveRDS(fits, here::here("data", "model_fits", "depth_rf_nobin_list.rds"))
 
 
 trellis.par.set(caretTheme())

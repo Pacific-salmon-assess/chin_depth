@@ -248,13 +248,15 @@ rf_tbl$top_model <- map(rf_list, function (x) x$top_model)
 gbm_tbl$top_model <- map(gbm_list, function (x) x$top_model) 
 model_tbl <- rbind(rf_tbl, gbm_tbl)
 
-# calculate RMSE relative to observations in real space
+# calculate RMSE relative to observations in real space for top models
 real_train <- rf_tbl$train_data[[3]]
 rmse_foo <- function(mod_in,
                      space = c("logit_rel_depth", "rel_depth", "depth"), 
                      model_type) {
   if (model_type == "rf") {
-    preds <- mod_in$predictions  
+    # preds <- mod_in$predictions  
+    preds <- predict(mod_in,
+                     data = imp_train %>% select(-depth_var))$predictions
   } else if (model_type == "gbm") {
     # note that need to apply recipe to training data before using 
     preds <- predict(mod_in,
@@ -272,6 +274,3 @@ rmse_foo <- function(mod_in,
 pmap(list(model_tbl$top_model, model_tbl$response, model_tbl$model_type), 
      rmse_foo)
 
-rmse_foo(rf_tbl$top_model[[3]], "depth", "rf")
-
-##

@@ -81,7 +81,6 @@ depth_dat <- depth_dat_raw %>%
 train_depth <- depth_dat %>% filter(!ind_block == "5") %>% droplevels()
 test_depth <- depth_dat %>% filter(ind_block == "5") %>% droplevels()
 
-
 # evaluate prevalence of additional vars
 length(train_depth$u[!is.na(train_depth$u)])
 length(train_depth$v[!is.na(train_depth$v)])
@@ -151,7 +150,6 @@ depth_ctrl <-   trainControl(
   index = train_folds
 )
 
-
 # boosted gradient model 
 # adjust grid space for hyperparameter tuning
 # gbm_grid <-  expand.grid(interaction.depth = c(2, 5, 10), #c(3, 5, 9),
@@ -204,12 +202,14 @@ for (i in seq_along(fits)) {
 tictoc::toc()
 
 
-fit_results <- purrr::map(fits, function (x) x$results) %>% 
-  bind_rows()
-
 # save models
 # saveRDS(depth_gbm, here::here("data", "model_fits", "depth_gbm_15min.rds"))
+# saveRDS(depth_rf, here::here("data", "model_fits", "depth_rf_15min.rds"))
 saveRDS(fits, here::here("data", "model_fits", "depth_rf_nobin_list.rds"))
+
+
+fit_results <- purrr::map(fits, function (x) x$results) %>% 
+  bind_rows()
 
 
 trellis.par.set(caretTheme())
@@ -266,7 +266,6 @@ png(here::here("figs", "depth_ml", "predictive_performance_15min_rf.png"),
     height = 8, width = 4, res = 200, units = "in")
 pred_foo(depth_rf, dat = test_depth)
 dev.off()
-
 
 
 # evaluate patterns

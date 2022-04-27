@@ -6,7 +6,7 @@ library(tidyverse)
 
 ## helper functions 
 # add coordinates in UTM space
-lonlat_to_utm<-function(x, y, zone){
+lonlat_to_utm <- function(x, y, zone){
   xy <- data.frame(ID = 1:length(x), X = x, Y = y)
   sp::coordinates(xy) <- c("X", "Y")
   sp::proj4string(xy) <- sp::CRS("+proj=longlat +datum=WGS84")  ## for example

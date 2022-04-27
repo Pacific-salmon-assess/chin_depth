@@ -51,7 +51,7 @@ rf_hist <- DALEX::model_performance(explainer_rf)
 plot(rf_hist, geom = "histogram")
 
 #Stage and bathymetry strongest predictors of depth distribution.
-png(here::here("figs", "depth_ml", "predictor_importance_15min_rf.png"))
+png(here::here("figs", "depth_ml", "predictor_importance_nobin_rf.png"))
 plot(feature_importance(explainer_rf))
 dev.off()
 

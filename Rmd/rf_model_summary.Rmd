@@ -1,0 +1,86 @@
+---
+title: "rf_model_summary"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(plyr)
+library(tidyverse)
+library(caret)
+library(recipes)
+library(DALEX)
+library(DALEXtra)
+```
+
+## Background
+
+Sensor data from V13P tags provide an opportunity to identify environmental variables that regulate Chinook salmon depth distributions. Intuitively depth distributions could be shaped by a range of physiological (condition, maturity stage), spatial (bathymetry, distance from shore, lat/long), temporal (diurnal and seasonal cycles), and dynamic environmental variables (temperature, salinity, prey availability). However these data are also intrinsically difficult to model. They consist of a large number of repeated measurements from a single individual resulting in substantial autocorrelation and are not normally distributed (bounded by the surface and bottom bathymetry). Typically these issues are addressed by transforming (e.g. quantifying differences using binned or proportional depth) and binning (e.g. taking the mean within an hour interval) the data, however there are downsides to this approach. Additionally a spatially explicit model is preferred to account for spatial autocorrelation and to estimate how Chinook may be behaving in locations within the study area, but without receivers.
+
+Since my initial attempts to fit GLMs and GAMs in various frameworks were not successful, Sean suggested using machine learning techniques which have fewer distributional assumptions and are robust to interactions among covariates, as well as autocorrelation. Some preliminary analyses indicated a random forest model fit to untransformed depth data was best supported. Briefly random forests generate a series of regression trees and average their predictions. Each tree begins with all the observations and partitions the data by splitting along a single covariate, choosing the covariate and node that minimizes the sums of squares at each each node. To increase stability, correlations among trees are reduced by using a bootstrap sample of the original data for each tree and at each split randomly selecting a subset of covariates. The major downside of these models is their interpretability, but given the nature of our data I think they're the best option. 
+
+I've included the following covariates, but am open to others if you feel I'm missing something.
+
+* Life stage--mature (fish will spawn that year) vs. immature (fish remains at sea)
+* Hour--diurnal cycles
+* Year day--seasonal cycles
+* Bottom depth--mean within an 800 meter radius of the receiver (approximate detection range)
+* Bathymetric slope--mean as above
+* Distance to shore
+* u-momentum--proxy for horizontal current strength (ROMS output)
+* v-momentum--proxy for horizontal current strength (ROMS)
+* w-momentum--proxy for vertical current strength (ROMS)
+* Temperature (ROMS)
+
+The ROMS derived variables are outputs assuming 25 m depth at the location of the receiver. I chose 25 m because this was the "average" depth among Chinook and because most variables were correlated at 5, 25, and 75 m depths, but we may want to use sea surface temperature instead.
+
+
+```{r import_model_fits}
+fits <- readRDS(here::here("data", "model_fits", "depth_rf_nobin_list.rds"))
+
+# bind results together
+fit_results <- purrr::map(fits, function (x) x$results) %>%
+  bind_rows()
+```
+
+
+```{r rf_preds, echo=FALSE}
+rf_mod <- fits[[4]]$finalModel
+train_dat <- fits[[4]]$trainingData 
+# bake_train_dat <- prep(fits[[2]]$recipe) %>%
+#   bake(., 
+#        new_data = train_dat %>% 
+#          dplyr::select(-depth))
+# 
+# preds <- predict(rf_mod, data = bake_train_dat)$predictions
+
+plot(rf_mod$predictions ~ train_dat$depth)
+abline(0, 1, col = "red")
+```
+
+```{r gen_rf_explainer}
+explainer_rf <- explain(
+  fits[[4]],
+  data = dplyr::select(
+    train_dat, 
+    hour, det_day, mean_bathy, mean_slope, shore_dist, u, v, w, 
+    roms_temp, utm_x, utm_y, stage
+  ),
+  y = train_dat$depth,
+  label = "random forest"
+)
+```
+Histogram of residuals looks pretty good.
+
+```{r rf_resid_histogram}
+rf_hist <- DALEX::model_performance(explainer_rf) 
+plot(rf_hist, geom = "histogram")
+```
+
+Stage and bathymetry strongest predictors of depth distribution.
+
+```{r variable_importance}
+plot(feature_importance(explainer_rf))
+```
+

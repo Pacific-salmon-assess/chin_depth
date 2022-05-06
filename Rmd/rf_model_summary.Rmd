@@ -12,13 +12,42 @@ library(caret)
 library(recipes)
 library(DALEX)
 library(DALEXtra)
+
+depth_dat_raw <- readRDS(
+  here::here("data", "depth_dat_nobin.RDS")) %>% 
+  mutate(stage = as.factor(stage),
+         depth = -1 * pos_depth)
 ```
 
 ## Background
 
-Sensor data from V13P tags provide an opportunity to identify environmental variables that regulate Chinook salmon depth distributions. Intuitively depth distributions could be shaped by a range of physiological (condition, maturity stage), spatial (bathymetry, distance from shore, lat/long), temporal (diurnal and seasonal cycles), and dynamic environmental variables (temperature, salinity, prey availability). However these data are also intrinsically difficult to model. They consist of a large number of repeated measurements from a single individual resulting in substantial autocorrelation and are not normally distributed (bounded by the surface and bottom bathymetry). Typically these issues are addressed by transforming (e.g. quantifying differences using binned or proportional depth) and binning (e.g. taking the mean within an hour interval) the data, however there are downsides to this approach. Additionally a spatially explicit model is preferred to account for spatial autocorrelation and to estimate how Chinook may be behaving in locations within the study area, but without receivers.
+Sensor data from V13P tags provide an opportunity to identify environmental variables that regulate Chinook salmon depth distributions. Intuitively depth distributions could be shaped by a range of physiological (condition, maturity stage), spatial (bathymetry, distance from shore, lat/long), temporal (diurnal and seasonal cycles), and dynamic environmental variables (temperature, salinity, prey availability). Importantly many of these covariates can interact with each other in counterintuitive ways.
 
-Since my initial attempts to fit GLMs and GAMs in various frameworks were not successful, Sean suggested using machine learning techniques which have fewer distributional assumptions and are robust to interactions among covariates, as well as autocorrelation. Some preliminary analyses indicated a random forest model fit to untransformed depth data was best supported. Briefly random forests generate a series of regression trees and average their predictions. Each tree begins with all the observations and partitions the data by splitting along a single covariate, choosing the covariate and node that minimizes the sums of squares at each each node. To increase stability, correlations among trees are reduced by using a bootstrap sample of the original data for each tree and at each split randomly selecting a subset of covariates. The major downside of these models is their interpretability, but given the nature of our data I think they're the best option. 
+Indeed the raw data show some relationships with each of these processes. As an example, there is (unsurprisingly) a relationship between bottom bathymetry and depth, which appears to vary among regions.
+
+```{r raw_bathy}
+ggplot(depth_dat_raw) +
+  geom_point(aes(x = mean_bathy, y = depth, fill = region_f), 
+             alpha = 0.4, shape = 21) +
+  facet_wrap(~stage)
+```
+
+There is also a strong seasonal and spatial signal in depth distribution.
+
+```{r raw_season}
+ggplot(depth_dat_raw) +
+  geom_point(aes(x = det_day, y = depth, fill = region_f), 
+             alpha = 0.4, shape = 21) +
+  facet_wrap(~stage)
+```
+
+## Modeling Approach
+
+The downside of high resolution individual data and a large number of covariates, is that models tend to be complex. Since the data consist of a large number of repeated measurements from a single individual there is substantial autocorrelation. The response is also not normally distributed (bounded by the surface and bottom bathymetry). Typically these issues are addressed with a combination of link functions appropriate for non-normal data, transforming the response (e.g. quantifying differences using binned or proportional depth) or binning (e.g. taking the mean within an hour interval), however there are downsides to these approaches. Additionally a spatially explicit model is preferred to account for spatial autocorrelation and to estimate how Chinook may be behaving in locations within the study area, but without receivers.
+
+Since my initial attempts to fit GLMs and GAMs in various frameworks were not successful, Sean suggested using machine learning techniques which have fewer distributional assumptions and are robust to interactions among covariates, as well as autocorrelation. Some preliminary analyses indicated a random forest model fit to untransformed depth data was better supported than models based on transformed data. 
+
+Briefly random forests generate a series of regression trees and average their predictions. Each tree begins with all the observations and partitions the data by splitting along a single covariate, choosing the covariate and node that minimizes the sums of squares at each each node. To increase stability, correlations among trees are reduced by using a bootstrap sample of the original data for each tree and at each split, randomly selecting a subset of covariates. The major downside of these models is their interpretability, but given the nature of our data I think they're the best option. 
 
 I've included the following covariates, but am open to others if you feel I'm missing something.
 
@@ -28,6 +57,7 @@ I've included the following covariates, but am open to others if you feel I'm mi
 * Bottom depth--mean within an 800 meter radius of the receiver (approximate detection range)
 * Bathymetric slope--mean as above
 * Distance to shore
+* UTM coordinates--spatial variation that is not accounted for by bathymetric variables or distance to shore
 * u-momentum--proxy for horizontal current strength (ROMS output)
 * v-momentum--proxy for horizontal current strength (ROMS)
 * w-momentum--proxy for vertical current strength (ROMS)
@@ -38,30 +68,37 @@ The ROMS derived variables are outputs assuming 25 m depth at the location of th
 
 ```{r import_model_fits}
 fits <- readRDS(here::here("data", "model_fits", "depth_rf_nobin_list.rds"))
-
-# bind results together
-fit_results <- purrr::map(fits, function (x) x$results) %>%
-  bind_rows()
 ```
 
 
-```{r rf_preds, echo=FALSE}
-rf_mod <- fits[[4]]$finalModel
-train_dat <- fits[[4]]$trainingData 
-# bake_train_dat <- prep(fits[[2]]$recipe) %>%
-#   bake(., 
-#        new_data = train_dat %>% 
-#          dplyr::select(-depth))
-# 
-# preds <- predict(rf_mod, data = bake_train_dat)$predictions
+Generally random forest models are evaluated relative to testing data, which are not used to fit the models. For simplicity's sake I'm showing performance relative to the training data. Ultimately the plan is to use the upcoming year's detections as our out-of-sample testing dataset to evaluate model performance.
 
-plot(rf_mod$predictions ~ train_dat$depth)
+```{r rf_preds, echo=FALSE}
+rf_mod <- fits[[3]]$finalModel
+train_dat <- fits[[3]]$trainingData 
+train_dat$pred_depth <- rf_mod$predictions
+bake_train_dat <- prep(fits[[3]]$recipe) %>%
+  bake(.,
+       new_data = train_dat %>%
+         dplyr::select(-depth))
+
+preds <- predict(rf_mod, data = bake_train_dat)$predictions
+
+plot(pred_depth ~ depth, data = train_dat, col = alpha("black", 0.3), pch=21)
 abline(0, 1, col = "red")
 ```
 
-```{r gen_rf_explainer}
+Residuals are reasonably distributed, but do show a relationship with depth. However I don't think this is an issue given the modeling framework.
+
+```{r rf_resids, echo = FALSE}
+train_dat$resids <- train_dat$depth - train_dat$pred_depth
+hist(train_dat$resids, breaks = 50)
+plot(resids ~ mean_bathy, data = train_dat, col = alpha("black", 0.3), pch=21)
+```
+
+```{r gen_rf_explainer, include=FALSE}
 explainer_rf <- explain(
-  fits[[4]],
+  fits[[3]],
   data = dplyr::select(
     train_dat, 
     hour, det_day, mean_bathy, mean_slope, shore_dist, u, v, w, 
@@ -70,15 +107,11 @@ explainer_rf <- explain(
   y = train_dat$depth,
   label = "random forest"
 )
-```
-Histogram of residuals looks pretty good.
 
-```{r rf_resid_histogram}
-rf_hist <- DALEX::model_performance(explainer_rf) 
-plot(rf_hist, geom = "histogram")
 ```
 
-Stage and bathymetry strongest predictors of depth distribution.
+
+The following figure ranks Stage and bathymetry strongest predictors of depth distribution.
 
 ```{r variable_importance}
 plot(feature_importance(explainer_rf))

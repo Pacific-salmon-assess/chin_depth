@@ -170,8 +170,6 @@ depth_ctrl <-   trainControl(
 # )
 # tictoc::toc()
 
-fits <- readRDS(here::here("data", "model_fits", "depth_rf_nobin_list.rds"))
-
 
 # random forest model
 tictoc::tic()
@@ -189,7 +187,7 @@ tictoc::tic()
 tree_seq <- seq(50, 200, by = 50)
 # fits <- vector(length = length(tree_seq), mode = "list")
 # names(fits) <- paste("trees_", tree_seq, sep = "")
-for (i in 3:4#seq_along(fits)
+for (i in seq_along(fits)
      ) {
   fits[[i]] <- train(
     depth_recipe,

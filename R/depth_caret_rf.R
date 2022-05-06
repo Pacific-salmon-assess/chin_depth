@@ -5,11 +5,12 @@ library(recipes)
 library(DALEX)
 library(DALEXtra)
 
-## Explore Random Forest Models
+## Explore Random Forest Models 
+# (script largely duplicated in rf_model_summary.Rmd)
 
 #Model comparison (depth_caret_comparison.R) indicates top model is random 
 #forest with moderate number of trees (<200) and fit to untransformed depth 
-#data. Fit various hyperparameters, including 50-200 trees in depth_caret and 
+#data. Fit various hyperparameters, including 50-200 trees in depth_caret.R and 
 #save fits to explore here. Models are stored in a list with different tree 
 #lengths so best model for each tree is available.
 
@@ -20,23 +21,27 @@ fit_results <- purrr::map(fits, function (x) x$results) %>%
   bind_rows()
 
 # Model performance similar among tree sizes but peaks at intermediate mtry and 
-# with extratrees split rule. Use 100 trees best model for subsequent 
+# with extratrees split rule. Use 200 trees best model for subsequent 
 # exploration. 
 ggplot(fit_results) +
   geom_point(aes(x = as.factor(mtry), y = RMSE, color = splitrule)) +
   facet_grid(as.factor(min.node.size)~n_trees, scales = "free_y")
 
+fit_results %>% 
+  filter(RMSE == min(RMSE))
+
+
 #Predictions with training data look pretty good although the model does 
 #chronically underpredict deepest depths and has an unusual bifurcation at 
 #deeper values.
-rf_mod <- fits[[4]]$finalModel
-train_dat <- fits[[4]]$trainingData 
+rf_mod <- fits[[3]]$finalModel
+train_dat <- fits[[3]]$trainingData 
 
 plot(rf_mod$predictions ~ train_dat$depth)
 abline(0, 1, col = "red")
 
 explainer_rf <- explain(
-  fits[[4]],
+  fits[[3]],
   data = dplyr::select(
     train_dat, 
     hour, det_day, mean_bathy, mean_slope, shore_dist, u, v, w, 
@@ -147,3 +152,4 @@ ggplot() +
   ggsidekick::theme_sleek() +
   facet_wrap(~ season)
 dev.off()
+

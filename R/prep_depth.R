@@ -60,12 +60,26 @@ depth_raw <- readRDS(here::here("data", "detections_all.RDS")) %>%
 
 # Add B. Hendricks data
 # NOTE: differences in receiver formatting may lead to issues...
+# Only correct for maturity based on date, not survival (no terminal detections
+# available)
 depth_combined <- readRDS(here::here("data", "hendricks_depth_dets.RDS")) %>% 
   mutate(receiver_sn = as.character(receiver_sn),
-         stage = "mature") %>% 
+         week = lubridate::week(date_time)) %>%
+  group_by(vemco_code) %>% 
+  mutate(
+    max_week = max(week),
+    stage = case_when(
+      max_week > 40 ~ "immature",
+      TRUE ~ "mature")
+  ) %>% 
+  ungroup() %>% 
   dplyr::rename(receiver = receiver_name) %>% 
+  select(-c(week, max_week)) %>% 
   rbind(depth_raw, .)
 
+# depth_combined %>% 
+#   ggplot(.) +
+#   geom_jitter(aes(x = week, y = depth, colour = stage))
 
 
 depth_utm <- lonlat_to_utm(depth_combined$longitude, depth_combined$latitude, 

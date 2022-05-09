@@ -197,7 +197,7 @@ dat_tbl <- expand_grid(
     preds = purrr::map(pred_grid, function (x) {
       bath_grid %>%
         mutate(
-          pred = predict(fits[[4]], newdata = x)
+          pred = predict(fits[[3]], newdata = x)
         )
     }
     )

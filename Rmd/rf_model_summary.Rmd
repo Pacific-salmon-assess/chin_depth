@@ -43,7 +43,7 @@ ggplot(depth_dat_raw) +
 
 ## Modeling Approach
 
-The downside of high resolution individual data and a large number of covariates, is that models tend to be complex. Since the data consist of a large number of repeated measurements from a single individual there is substantial autocorrelation. The response is also not normally distributed (bounded by the surface and bottom bathymetry). Typically these issues are addressed with a combination of link functions appropriate for non-normal data, transforming the response (e.g. quantifying differences using binned or proportional depth) or binning (e.g. taking the mean within an hour interval), however there are downsides to these approaches. Additionally a spatially explicit model is preferred to account for spatial autocorrelation and to estimate how Chinook may be behaving in locations within the study area, but without receivers.
+The downside of high resolution individual data and a large number of covariates, is that the models necessary to explore patterns are complex. Since the data consist of a large number of repeated measurements from a single individual there is substantial autocorrelation. The response is also not normally distributed (bounded by the surface and bottom bathymetry). Typically these issues are addressed with a combination of link functions appropriate for non-normal data, transforming the response (e.g. quantifying differences using binned or proportional depth) or binning (e.g. taking the mean within an hour interval), however there are downsides to these approaches. Additionally a spatially explicit model is preferred to account for spatial autocorrelation and to estimate how Chinook may be behaving in locations within the study area, but without receivers.
 
 Since my initial attempts to fit GLMs and GAMs in various frameworks were not successful, Sean suggested using machine learning techniques which have fewer distributional assumptions and are robust to interactions among covariates, as well as autocorrelation. Some preliminary analyses indicated a random forest model fit to untransformed depth data was better supported than models based on transformed data. 
 
@@ -67,22 +67,25 @@ The ROMS derived variables are outputs assuming 25 m depth at the location of th
 
 
 ```{r import_model_fits}
-fits <- readRDS(here::here("data", "model_fits", "depth_rf_nobin_list.rds"))
+## issues with explainer and fit list; use random forest model from 
+# depth_caret.R instead
+# fits <- readRDS(here::here("data", "model_fits", "depth_rf_nobin_list.rds"))
+rf_mod <- readRDS(here::here("data", "model_fits", "depth_rf_nobin.rds"))
 ```
 
 
 Generally random forest models are evaluated relative to testing data, which are not used to fit the models. For simplicity's sake I'm showing performance relative to the training data. Ultimately the plan is to use the upcoming year's detections as our out-of-sample testing dataset to evaluate model performance.
 
 ```{r rf_preds, echo=FALSE}
-rf_mod <- fits[[3]]$finalModel
-train_dat <- fits[[3]]$trainingData 
-train_dat$pred_depth <- rf_mod$predictions
-bake_train_dat <- prep(fits[[3]]$recipe) %>%
-  bake(.,
-       new_data = train_dat %>%
-         dplyr::select(-depth))
+rf_mod_final <- rf_mod$finalModel
+train_dat <- rf_mod$trainingData 
+train_dat$pred_depth <- rf_mod_final$predictions
+# bake_train_dat <- prep(fits[[3]]$recipe) %>%
+#   bake(.,
+#        new_data = train_dat %>%
+#          dplyr::select(-depth))
 
-preds <- predict(rf_mod, data = bake_train_dat)$predictions
+# preds <- predict(rf_mod, data = bake_train_dat)$predictions
 
 plot(pred_depth ~ depth, data = train_dat, col = alpha("black", 0.3), pch=21)
 abline(0, 1, col = "red")
@@ -98,16 +101,15 @@ plot(resids ~ mean_bathy, data = train_dat, col = alpha("black", 0.3), pch=21)
 
 ```{r gen_rf_explainer, include=FALSE}
 explainer_rf <- explain(
-  fits[[3]],
+  depth_rf,
   data = dplyr::select(
-    train_dat, 
-    hour, det_day, mean_bathy, mean_slope, shore_dist, u, v, w, 
-    roms_temp, utm_x, utm_y, stage
+    train_dat, hour, det_day, mean_bathy, mean_slope, shore_dist, u, v, w, 
+    roms_temp,
+    utm_x, utm_y, stage
   ),
   y = train_dat$depth,
   label = "random forest"
 )
-
 ```
 
 

@@ -27,29 +27,107 @@ ggplot(fit_results) +
   geom_point(aes(x = as.factor(mtry), y = RMSE, color = splitrule)) +
   facet_grid(as.factor(min.node.size)~n_trees, scales = "free_y")
 
-fit_results %>% 
-  filter(RMSE == min(RMSE))
+n_trees <- fit_results %>% 
+  filter(RMSE == min(RMSE)) %>% 
+  pull(n_trees)
+
+
+## REFIT -----------------------------------------------------------------------
+
+# issues using explainers with original fits so refit here
+
+depth_dat_raw <- readRDS(
+  here::here("data", "depth_dat_nobin.RDS")) %>% 
+  mutate(stage = as.factor(stage))
+
+
+# add individual block
+set.seed(1234)
+ind_folds <- data.frame(
+  vemco_code = unique(depth_dat_raw$vemco_code),
+  ind_block =  sample.int(
+    8, length(unique(depth_dat_raw$vemco_code)), replace = T
+  ) %>% 
+    as.factor()
+)
+
+depth_dat <- depth_dat_raw %>% 
+  left_join(., ind_folds, by = "vemco_code") %>% 
+  dplyr::select(
+    depth = pos_depth, stage, utm_x, utm_y, 
+    hour, det_day, mean_bathy, mean_slope, shore_dist,
+    u, v, w, roms_temp, ind_block
+  ) 
+
+# split by individual blocking
+train_depth <- depth_dat %>% filter(!ind_block == "5") %>% droplevels()
+test_depth <- depth_dat %>% filter(ind_block == "5") %>% droplevels()
+
+depth_recipe <- recipe(depth ~ ., 
+                       data = train_depth %>% 
+                         dplyr::select(-ind_block)) %>% 
+  #impute missing ROMS values
+  step_impute_knn(all_predictors(), neighbors = 3) %>%
+  step_nzv(all_predictors()) %>% 
+  step_dummy(all_predictors(), -all_numeric())
+
+
+train_folds <- groupKFold(train_depth$ind_block,
+                          k = length(unique(train_depth$ind_block)))
+depth_ctrl <-   trainControl(
+  method="repeatedcv",
+  index = train_folds
+)
+
+depth_rf <- train(
+  depth_recipe,
+  train_depth %>% dplyr::select(-ind_block),
+  method = "ranger",
+  metric = "RMSE",
+  maximize = FALSE,
+  tuneLength = 6,
+  trControl = depth_ctrl,
+  num.trees = n_trees
+)
+
+
+#  explainer
+explainer_rf <- explain(
+  depth_rf,
+  data = dplyr::select(
+    train_depth, hour, det_day, mean_bathy, mean_slope, shore_dist, u, v, w, 
+    roms_temp,
+    utm_x, utm_y, stage
+  ),
+  y = train_depth$depth,
+  label = "random forest"
+)
+var_imp_plot <- plot(feature_importance(explainer_rf))
+
+# partial dependencies
+pdp <- model_profile(explainer_rf, type = "partial", groups = "stage")
+pdp_plot <- plot(pdp, geom = "profiles")
+
+
+
+# save for use in rmd
+saveRDS(list(explainer = explainer_rf,
+             var_imp_plot = var_imp_plot,
+             pdp = pdp),
+        here::here("data", "model_fits", "depth_rf_nobin_explainers.rds")
+        )
+
 
 
 #Predictions with training data look pretty good although the model does 
 #chronically underpredict deepest depths and has an unusual bifurcation at 
 #deeper values.
-rf_mod <- fits[[3]]$finalModel
-train_dat <- fits[[3]]$trainingData 
+rf_mod <- explainer_rf$finalModel
+train_dat <- explainer_rf$trainingData 
 
 plot(rf_mod$predictions ~ train_dat$depth)
 abline(0, 1, col = "red")
 
-explainer_rf <- explain(
-  fits[[3]],
-  data = dplyr::select(
-    train_dat, 
-    hour, det_day, mean_bathy, mean_slope, shore_dist, u, v, w, 
-    roms_temp, utm_x, utm_y, stage
-  ),
-  y = train_dat$depth,
-  label = "random forest"
-)
 
 # histogram of residuals looks pretty good.
 rf_hist <- DALEX::model_performance(explainer_rf) 

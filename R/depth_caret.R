@@ -173,40 +173,40 @@ depth_ctrl <-   trainControl(
 
 # random forest model
 tictoc::tic()
-# depth_rf <- train(
-#   depth_recipe,
-#   train_depth %>% dplyr::select(-ind_block),
-#   method = "ranger", 
-#   metric = "RMSE",
-#   maximize = FALSE,
-#   tuneLength = 6,
-#   trControl = depth_ctrl,
-#   num.trees = 500
-# )
+depth_rf <- train(
+  depth_recipe,
+  train_depth %>% dplyr::select(-ind_block),
+  method = "ranger",
+  metric = "RMSE",
+  maximize = FALSE,
+  tuneLength = 6,
+  trControl = depth_ctrl,
+  num.trees = 150
+)
 
-tree_seq <- seq(50, 200, by = 50)
+# tree_seq <- seq(50, 200, by = 50)
 # fits <- vector(length = length(tree_seq), mode = "list")
 # names(fits) <- paste("trees_", tree_seq, sep = "")
-for (i in seq_along(fits)
-     ) {
-  fits[[i]] <- train(
-    depth_recipe,
-    train_depth %>% dplyr::select(-ind_block),
-    method = "ranger", 
-    metric = "RMSE",
-    maximize = FALSE,
-    tuneLength = 10,
-    trControl = depth_ctrl,
-    num.trees = tree_seq[i]
-  ) 
-  fits[[i]]$results$n_trees <- tree_seq[i]
-}
+# for (i in seq_along(fits)
+#      ) {
+#   fits[[i]] <- train(
+#     depth_recipe,
+#     train_depth %>% dplyr::select(-ind_block),
+#     method = "ranger", 
+#     metric = "RMSE",
+#     maximize = FALSE,
+#     tuneLength = 10,
+#     trControl = depth_ctrl,
+#     num.trees = tree_seq[i]
+#   ) 
+#   fits[[i]]$results$n_trees <- tree_seq[i]
+# }
 tictoc::toc()
 
 
 # save models
 # saveRDS(depth_gbm, here::here("data", "model_fits", "depth_gbm_15min.rds"))
-# saveRDS(depth_rf, here::here("data", "model_fits", "depth_rf_15min.rds"))
+saveRDS(depth_rf, here::here("data", "model_fits", "depth_rf_nobin.rds"))
 saveRDS(fits, here::here("data", "model_fits", "depth_rf_nobin_list.rds"))
 
 
@@ -289,9 +289,9 @@ explainer_rf <- explain(
   data = dplyr::select(
     train_depth, hour, det_day, mean_bathy, mean_slope, shore_dist, u, v, w, 
     roms_temp,
-    latitude, longitude, stage
+    utm_x, utm_y, stage
   ),
-  y = train_depth$logit_rel_depth,
+  y = train_depth$depth,
   label = "random forest"
 )
 

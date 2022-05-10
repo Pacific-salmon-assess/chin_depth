@@ -117,7 +117,10 @@ saveRDS(list(explainer = explainer_rf,
         here::here("data", "model_fits", "depth_rf_nobin_explainers.rds")
         )
 
-
+png(here::here("figs", "depth_ml", "predictor_importance_nobin_rf.png"))
+# var_imp_plot
+exp_list$var_imp_plot
+dev.off()
 
 #Predictions with training data look pretty good although the model does 
 #chronically underpredict deepest depths and has an unusual bifurcation at 
@@ -231,3 +234,33 @@ ggplot() +
   facet_wrap(~ season)
 dev.off()
 
+
+pdf(here::here("figs", "depth_ml", "pred_depth_pres.pdf"),
+    height = 6, width = 8)
+ggplot() + 
+  geom_sf(data = coast) +
+  geom_raster(data = dat %>% filter(stage == "immature", day == "day",
+                                    season %in% c("winter", "summer")), 
+              aes(x = longitude, y = latitude, fill = pred)) +
+  scale_fill_viridis_c(name = "depth") +
+  ggsidekick::theme_sleek() +
+  facet_wrap(~season) +
+  theme(axis.title = element_blank())
+ggplot() + 
+  geom_sf(data = coast) +
+  geom_raster(data = dat %>% filter(season == "summer", day == "day"), 
+              aes(x = longitude, y = latitude, fill = pred)) +
+  scale_fill_viridis_c(name = "depth") +
+  ggsidekick::theme_sleek() +
+  facet_wrap(~stage) +
+  theme(axis.text = element_blank())
+ggplot() + 
+  geom_sf(data = coast) +
+  geom_raster(data = dat %>% filter(season %in% c("summer"),
+                                    stage == "mature"), 
+              aes(x = longitude, y = latitude, fill = pred)) +
+  scale_fill_viridis_c(name = "depth") +
+  ggsidekick::theme_sleek() +
+  facet_wrap(~day) +
+  theme(axis.text = element_blank())
+dev.off()

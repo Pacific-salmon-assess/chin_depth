@@ -110,13 +110,13 @@ exp_list <- readRDS(here::here(
 
 The following figure estimates each covariate's relative importance by permutation (a single covariate is permuted, breaking its relationship with depth, and the change in RMSE is calculated). More important variables will result in a greater increase in RMSE after permutation and the whiskers represent variation among different permutations. Here bathymetry and life stage (mature v. immature) have the greatest explanatory power, but seasonal (det_day) and diurnal (hour) effects are also present. The remaining spatial and ROMS variables have more modest influence on mean depth.
 
-```{r variable_importance, include=FALSE}
+```{r variable_importance, echo=FALSE}
 exp_list$var_imp_plot
 ```
 
 Partial dependence profiles provide an estimate of how the response changes across different values of a covariate, holding all other covariates at a specific value (here there mean). Seasonal and bathymetry effects are particularly pronounced. Generally immature fish have deeper distributions than mature fish, but there is evidence for interactive effects (e.g. bathymetry has a stronger effect for immature than mature fish). 
 
-```{r profile_plots, include=FALSE}
+```{r profile_plots, echo=FALSE}
 plot(exp_list$pdp)
 ```
 

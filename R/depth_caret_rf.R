@@ -242,6 +242,7 @@ ggplot() +
   geom_raster(data = dat %>% filter(stage == "immature", day == "day",
                                     season %in% c("winter", "summer")), 
               aes(x = longitude, y = latitude, fill = pred)) +
+  coord_sf(ylim = c(46.2, 49.2), expand = FALSE) +
   scale_fill_viridis_c(name = "depth") +
   ggsidekick::theme_sleek() +
   facet_wrap(~season) +
@@ -250,6 +251,7 @@ ggplot() +
   geom_sf(data = coast) +
   geom_raster(data = dat %>% filter(season == "summer", day == "day"), 
               aes(x = longitude, y = latitude, fill = pred)) +
+  coord_sf(ylim = c(46.2, 49.2), expand = FALSE) +
   scale_fill_viridis_c(name = "depth") +
   ggsidekick::theme_sleek() +
   facet_wrap(~stage) +
@@ -259,6 +261,7 @@ ggplot() +
   geom_raster(data = dat %>% filter(season %in% c("summer"),
                                     stage == "mature"), 
               aes(x = longitude, y = latitude, fill = pred)) +
+  coord_sf(ylim = c(46.2, 49.2), expand = FALSE) +
   scale_fill_viridis_c(name = "depth") +
   ggsidekick::theme_sleek() +
   facet_wrap(~day) +

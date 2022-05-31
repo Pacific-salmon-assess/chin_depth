@@ -1,6 +1,6 @@
 ---
 title: "rf_model_summary"
-output: html_document
+output: pdf_document
 ---
 
 ```{r setup, include=FALSE}
@@ -22,7 +22,7 @@ depth_dat_raw <- readRDS(
 
 ## Background
 
-Sensor data from V13P tags provide an opportunity to identify environmental variables that regulate Chinook salmon depth distributions. Intuitively depth distributions could be shaped by a range of physiological (condition, maturity stage), spatial (bathymetry, distance from shore, lat/long), temporal (diurnal and seasonal cycles), and dynamic environmental variables (temperature, salinity, prey availability). Importantly many of these covariates can interact with each other in counterintuitive ways.
+Sensor data from V13P tags provide an opportunity to identify environmental variables that regulate Chinook salmon depth distributions. Intuitively depth distributions could be shaped by a range of physiological (condition, maturity stage), spatial (bathymetry, distance from shore, lat/long), temporal (diurnal and seasonal cycles), and dynamic environmental variables (temperature, salinity, prey availability). Importantly these covariates can interact with each other in counterintuitive ways.
 
 Indeed the raw data show some relationships with each of these processes. As an example, there is (unsurprisingly) a relationship between bottom bathymetry and depth, which appears to vary among regions.
 
@@ -33,7 +33,7 @@ ggplot(depth_dat_raw) +
   facet_wrap(~stage)
 ```
 
-There is also a strong seasonal and spatial signal in depth distribution.
+There is also a strong seasonal and spatial signal in depth distribution. Note that seasonal cycles vary among mature and immature fish. Immature fish were assumed to be mature at time of tagging based on size, but reared at sea for an additional year.
 
 ```{r raw_season, echo=FALSE}
 ggplot(depth_dat_raw) +
@@ -44,9 +44,9 @@ ggplot(depth_dat_raw) +
 
 ## Modeling Approach
 
-The downside of high resolution individual data and a large number of covariates is that complex models are often necessary to account for structure within the data. In this case, because there are a large number of repeated measurements from a single individual there is substantial temporal autocorrelation. Accounting for this autocorrelation is particularly difficult because sometimes the lag is minutes and sometimes it's weeks. The response, depth, is also not normally distributed (bounded by the surface and bottom bathymetry). Typically these issues are addressed with a combination of link functions appropriate for non-normal data, transforming the response (e.g. quantifying differences using binned or proportional depth) or binning (e.g. taking the mean within an hour interval), however there are downsides to these approaches. Additionally a spatially explicit model is preferred to account for spatial autocorrelation and to estimate how Chinook may be behaving in locations within the study area, but without receivers.
+The downside of high resolution individual data and a large number of covariates is that complex models are often necessary to account for the data's underlying structure. In this case, there are a large number of repeated measurements resulting in substantial temporal autocorrelation. Accounting for this autocorrelation is particularly difficult because the lag between detections varies from seconds to weeks. The response, depth, is also not normally distributed (bounded by the surface and bottom bathymetry). Typically these issues are addressed with a combination of link functions appropriate for non-normal data, transforming the response (e.g. quantifying differences using binned or proportional depth) or binning (e.g. taking the mean within an hour interval), however there are downsides to these approaches. Additionally a spatially explicit model is preferred to account for spatial autocorrelation and to estimate how Chinook may be behaving in locations within the study area, but without receivers.
 
-Since my initial attempts to fit GLMs and GAMs in various frameworks were not successful, Sean suggested using machine learning techniques which have fewer distributional assumptions and are robust to interactions among covariates, as well as autocorrelation. Some preliminary analyses indicated a random forest model fit to untransformed depth data was better supported than models based on transformed data. 
+Since my initial attempts to fit traditional models were not successful, Sean suggested using machine learning techniques which have fewer distributional assumptions and are robust to interactions among covariates, as well as autocorrelation. Some preliminary analyses indicated a random forest model fit to untransformed depth data was better supported than other models (e.g. gradient boosting machines) or models fit to transformed data. 
 
 Briefly random forests generate a series of regression trees and average their predictions. Each tree begins with all the observations and partitions the data by splitting along a single covariate, choosing the covariate and node that minimizes the sums of squares at each each node. To increase stability, correlations among trees are reduced by using a bootstrap sample of the original data for each tree and at each split, randomly selecting a subset of covariates. The major downside of these models is their interpretability, but given the nature of our data I think they're the best option. 
 
@@ -187,7 +187,7 @@ dat <- dat_tbl %>%
 
 Each map is constrained to the core study area (i.e. continental shelf and southern areas with majority of receiver coverage). Warmer colors always represent deeper depths, but the scale is relative and varies from figure to figure. 
 
-First are seasonal patterns. These are focused only on immature fish, since winter observations are unavailable for mature fish, and are daytime predictions. Note that maximum depth increases slightly in winter, but the major change seems to more widespread deep observations in winter months.
+First are seasonal patterns. These are focused only on immature fish, since winter observations are unavailable for mature fish, and are daytime predictions. Note that maximum depth increases slightly in winter, but the major change seems to be more widespread deep observations in winter months.
 
 ```{r seasonal_patterns, echo=FALSE}
 ggplot() + 
@@ -229,4 +229,4 @@ ggplot() +
   facet_wrap(~day)
 ```
 
-While I think these figures characterize the main take homes from the depth data, this analysis is still preliminary. In particular, I need to generate estimates of uncertainty for the partial dependency profiles via bootstrapping. As previously mentioned I'd also like to use 2022 detections as an out-of-sample test for the model to evaluate its performance with new data. If folks have any suggestions on how it should be tweaked (e.g. alternative covariates), please let me know.  
+While I think these figures characterize the main take homes from the depth data, this analysis is still preliminary. In particular, I need to generate estimates of uncertainty for the partial dependency profiles via bootstrapping. As previously mentioned I'd also like to use 2022 detections as an out-of-sample test for the model to evaluate its performance with new data. I also need better bathymetric data for American waters. If anyone has digital elevation maps for the shelf off Washington please let me know. If folks have any suggestions on how it should be tweaked (e.g. alternative covariates), please let me know.  

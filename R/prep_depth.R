@@ -81,9 +81,9 @@ depth_combined <- readRDS(here::here("data", "hendricks_depth_dets.RDS")) %>%
 #   ggplot(.) +
 #   geom_jitter(aes(x = week, y = depth, colour = stage))
 
-
+# use zone 9 to match prediction grid
 depth_utm <- lonlat_to_utm(depth_combined$longitude, depth_combined$latitude, 
-                          zone = 10) 
+                          zone = 9) 
 depth_combined$utm_x <- depth_utm$X / 1000 
 depth_combined$utm_y <- depth_utm$Y / 1000
 
@@ -194,15 +194,17 @@ saveRDS(depth_dat_null,
 
 ## ADD UTMs --------------------------------------------------------------------
 
-pred_bathy_grid <- readRDS(here::here("data", "pred_bathy_grid.RDS")) %>% 
-  rename(longitude = X, latitude = Y)
+# Now added externally in Chin tagging repo
 
-grid_utm <- lonlat_to_utm(pred_bathy_grid$longitude, pred_bathy_grid$latitude, 
-                           zone = 10) 
-pred_bathy_grid$utm_x <- grid_utm$X / 1000
-pred_bathy_grid$utm_y <- grid_utm$Y / 1000
-
-saveRDS(pred_bathy_grid, here::here("data", "pred_bathy_grid.RDS"))
+# pred_bathy_grid <- readRDS(here::here("data", "pred_bathy_grid.RDS")) %>% 
+#   rename(longitude = X, latitude = Y)
+# 
+# grid_utm <- lonlat_to_utm(pred_bathy_grid$longitude, pred_bathy_grid$latitude, 
+#                            zone = 10) 
+# pred_bathy_grid$utm_x <- grid_utm$X / 1000
+# pred_bathy_grid$utm_y <- grid_utm$Y / 1000
+# 
+# saveRDS(pred_bathy_grid, here::here("data", "pred_bathy_grid.RDS"))
 
 
 ## DEPTH PROFILES --------------------------------------------------------------

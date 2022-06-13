@@ -93,50 +93,27 @@ train_depth_baked <- prep(depth_recipe) %>%
        new_data = train_depth %>% 
          dplyr::select(-ind_block))
 
-# rf_refit <- randomForest::randomForest(depth ~ ., 
-#                                        data = train_depth_baked, 
-#                                        mtry = depth_rf$bestTune$mtry, 
-#                                        ntree = n_trees)
 rf_refit <- quantregForest::quantregForest(
   x = train_depth_baked %>% dplyr::select(-depth),
   y = train_depth_baked$depth, 
   data = train_depth_baked, 
   mtry = mtry_in, 
-  ntree = n_trees_in,
+  ntree = 1000,
   importance = TRUE
 )
+saveRDS(here::here("data", "model_fits", "depth_quantrf.rds"))
 
 
-# COUNTERFACTUAL PREDICT -------------------------------------------------------
+# CHECK PREDS ------------------------------------------------------------------
 
-# generate predictions for maturity stage and bathymetric effects
-new_dat <- expand.grid(
-  stage_mature = c(0, 1),
-  mean_bathy = seq(0,
-                   round(max(train_depth_baked$mean_bathy), 0),
-                   length.out = 100)
-) %>%
-  mutate(utm_x = mean(train_depth_baked$utm_x),
-         hour = mean(train_depth_baked$hour),
-         det_day = mean(train_depth_baked$det_day),
-         utm_y = mean(train_depth_baked$utm_y),
-         mean_slope = mean(train_depth_baked$mean_slope),
-         shore_dist = mean(train_depth_baked$shore_dist),
-         u = mean(train_depth_baked$u),
-         v = mean(train_depth_baked$v),
-         w = mean(train_depth_baked$w),
-         roms_temp = mean(train_depth_baked$roms_temp))
+obs_preds <- predict(rf_refit, quantiles = c(0.1, 0.5, 0.9),
+                     newdata = train_depth_baked, all = TRUE)
+colnames(obs_preds) <- c("lo", "mean", "up")
 
-pred_rf <- predict(rf_refit, quantiles = c(0.1, 0.5, 0.9),
-                   newdata = new_dat, all = TRUE)
-colnames(pred_rf) <- c("lo", "mean", "up")
-
-cbind(new_dat, pred_rf) %>%
-  mutate(stage_f = as.factor(stage_mature)) %>% 
-  ggplot(., aes(x = mean_bathy)) +
-  geom_line(aes(y = mean, color = stage_f), size = 1.5) +
-  geom_ribbon(aes(ymin = lo, ymax = up, fill = stage_f), alpha = 0.2) +
-  ggsidekick::theme_sleek()
+cbind(train_depth_baked, obs_preds) %>% 
+  ggplot(.) +
+  geom_pointrange(aes(x = depth, y = mean, ymin = lo, ymax = up),
+                  alpha = 0.3)
 
 
 # VARIABLE IMPORTANCE ----------------------------------------------------------
@@ -154,6 +131,80 @@ importance(mtcars.rf)
 importance(mtcars.rf, type=1)
 
 
+# COUNTERFACTUAL PREDICT -------------------------------------------------------
+
+# generate predictions for maturity stage and different counterfacs (e.g. 
+# most important 3 variables)
+new_dat <- expand.grid(
+  stage_mature = c(0, 1)#,
+  # mean_bathy = seq(0,
+  #                  round(max(train_depth_baked$mean_bathy), 0),
+  #                  length.out = 100)
+) %>%
+  mutate(mean_bathy = mean(train_depth_baked$mean_bathy),
+         utm_x = mean(train_depth_baked$utm_x),
+         hour = mean(train_depth_baked$hour),
+         det_day = mean(train_depth_baked$det_day),
+         utm_y = mean(train_depth_baked$utm_y),
+         mean_slope = mean(train_depth_baked$mean_slope),
+         shore_dist = mean(train_depth_baked$shore_dist),
+         u = mean(train_depth_baked$u),
+         v = mean(train_depth_baked$v),
+         w = mean(train_depth_baked$w),
+         roms_temp = mean(train_depth_baked$roms_temp))
+
+# make tibble for different counterfacs
+pred_foo <- function(var) {
+  min_var <- min(train_depth_baked[ , var])
+  max_var <- max(train_depth_baked[ , var])
+  
+  # necessary to deal with string input
+  varname <- ensym(var)
+  
+  # expand by inputs
+  preds_in <- expand_grid(stage_mature = c(0, 1),
+                          dum = seq(min_var, max_var, length.out = 100)) %>% 
+    rename(!!varname := dum) %>% 
+    left_join(., 
+              # add other variables
+              new_dat %>% select(- {{ var }}),
+              by = "stage_mature")
+  
+  # make predictions
+  preds_out <- predict(rf_refit, quantiles = c(0.1, 0.5, 0.9),
+                       newdata = preds_in, all = TRUE)
+  colnames(preds_out) <- c("lo", "mean", "up")
+  cbind(preds_in, preds_out) %>% 
+    mutate(stage_f = as.factor(stage_mature))
+}
+
+counterfac_tbl <- tibble(
+  var = c("mean_bathy", "hour", "det_day", "shore_dist")) %>% 
+  mutate(
+    preds = purrr::map(var, pred_foo)
+  )
+
+plot_list <- purrr::map2(
+  counterfac_tbl$var, 
+  counterfac_tbl$preds, 
+  function (var, preds) {
+    preds %>%
+      ggplot(., aes_string(x = var)) +
+      geom_line(aes(y = mean, color = stage_f), size = 1.5) +
+      geom_ribbon(aes(ymin = lo, ymax = up, fill = stage_f), alpha = 0.4) +
+      ggsidekick::theme_sleek()
+  }
+)
+
+counterfac_tbl$preds[[4]] %>%
+  mutate(stage_f = as.factor(stage_mature)) %>% 
+  ggplot(., aes(x = shore_dist)) +
+  geom_line(aes(y = mean, color = stage_f), size = 1.5) +
+  geom_ribbon(aes(ymin = lo, ymax = up, fill = stage_f), alpha = 0.4) +
+  ggsidekick::theme_sleek()
+
+
+
 # SPATIAL PREDICT --------------------------------------------------------------
 
 
@@ -161,7 +212,7 @@ coast_utm <- rbind(rnaturalearth::ne_states( "United States of America",
                                              returnclass = "sf"), 
                    rnaturalearth::ne_states( "Canada", returnclass = "sf")) %>% 
   sf::st_crop(., 
-              xmin = -128, ymin = 45.5, xmax = -122, ymax = 51) %>% 
+              xmin = -127.5, ymin = 46, xmax = -122, ymax = 49.5) %>% 
   sf::st_transform(., crs = sp::CRS("+proj=utm +zone=9 +units=m"))
 
 
@@ -238,7 +289,8 @@ pred_dat <- dat_tbl %>%
   select(stage_mature, day, season, preds) %>% 
   unnest(cols = preds) %>% 
   mutate(utm_x_m = utm_x * 1000,
-         utm_y_m = utm_y * 1000) %>% 
+         utm_y_m = utm_y * 1000,
+         pred_int_width = pred_up - pred_lo) %>% 
   filter(!mean_bathy > 400)
   
 
@@ -257,6 +309,15 @@ ggplot() +
   geom_sf(data = coast_utm) +
   geom_raster(data = pred_dat %>% filter(season == "summer", day == "day"), 
               aes(x = utm_x_m, y = utm_y_m, fill = pred_med)) +
+  scale_fill_viridis_c(name = "depth") +
+  ggsidekick::theme_sleek() +
+  facet_wrap(~stage_mature) +
+  theme(axis.text = element_blank())
+ggplot() + 
+  geom_sf(data = coast_utm) +
+  geom_raster(data = pred_dat %>% filter(season %in% c("summer"),
+                                         day == "day"), 
+              aes(x = utm_x_m, y = utm_y_m, fill = pred_int_width)) +
   scale_fill_viridis_c(name = "depth") +
   ggsidekick::theme_sleek() +
   facet_wrap(~stage_mature) +

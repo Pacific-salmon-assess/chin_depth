@@ -79,6 +79,8 @@ depth_ctrl <-   trainControl(
   index = train_folds
 )
 
+
+# fit with random forest to identify top model
 depth_rf <- train(
   depth_recipe,
   train_depth %>% dplyr::select(-ind_block),
@@ -89,6 +91,42 @@ depth_rf <- train(
   trControl = depth_ctrl,
   num.trees = n_trees
 )
+
+
+
+# refit top model in random forest, using quantregforest to generate uncertainty
+# intervals
+
+# apply recipe to dataframe to interpolate values
+train_depth_baked <- prep(depth_recipe) %>%
+  bake(., 
+       new_data = train_depth %>% 
+         dplyr::select(-ind_block))
+
+rf_refit <- randomForest::randomForest(depth ~ ., 
+                                       data = train_depth_baked, 
+                                       mtry = depth_rf$bestTune$mtry, 
+                                       ntree = n_trees)
+
+
+# new_dat <- expand.grid(
+#   stage_mature = c(0, 1),
+#   mean_bathy = seq(0,
+#                    round(max(train_depth_baked$mean_bathy), 0),
+#                    length.out = 100)
+# ) %>% 
+#   mutate(utm_x = mean(train_depth_baked$utm_x),
+#          hour = mean(train_depth_baked$hour),
+#          det_day = mean(train_depth_baked$det_day),
+#          utm_y = mean(train_depth_baked$utm_y),
+#          mean_slope = mean(train_depth_baked$mean_slope),
+#          shore_dist = mean(train_depth_baked$shore_dist),
+#          u = mean(train_depth_baked$u),
+#          v = mean(train_depth_baked$v),
+#          w = mean(train_depth_baked$w),
+#          roms_temp = mean(train_depth_baked$roms_temp))
+# 
+# pred_rf <- predict(rf_refit, new_dat, predict_all = TRUE)
 
 
 #  explainer

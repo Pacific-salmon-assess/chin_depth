@@ -16,6 +16,12 @@ library(randomForest)
 library(quantregForest)
 
 
+depth_dat_raw <- readRDS(
+  here::here("data", "depth_dat_nobin.RDS")) %>% 
+  mutate(stage = as.factor(stage))
+
+
+# fits from model comparison
 fits <- readRDS(here::here("data", "model_fits", "depth_rf_nobin_list.rds"))
 
 # bind results together
@@ -39,11 +45,6 @@ mtry_in <- fit_results %>%
 
 
 ## REFIT -----------------------------------------------------------------------
-
-depth_dat_raw <- readRDS(
-  here::here("data", "depth_dat_nobin.RDS")) %>% 
-  mutate(stage = as.factor(stage))
-
 
 # add individual block
 set.seed(1234)
@@ -95,13 +96,14 @@ train_depth_baked <- prep(depth_recipe) %>%
 
 rf_refit <- quantregForest::quantregForest(
   x = train_depth_baked %>% dplyr::select(-depth),
-  y = train_depth_baked$depth, 
-  data = train_depth_baked, 
-  mtry = mtry_in, 
+  y = train_depth_baked$depth,
+  data = train_depth_baked,
+  mtry = mtry_in,
   ntree = 1000,
   importance = TRUE
 )
-saveRDS(here::here("data", "model_fits", "depth_quantrf.rds"))
+saveRDS(rf_refit, here::here("data", "model_fits", "depth_quantrf.rds"))
+rf_refit <- readRDS(here::here("data", "model_fits", "depth_quantrf.rds"))
 
 
 # CHECK PREDS ------------------------------------------------------------------
@@ -118,17 +120,32 @@ cbind(train_depth_baked, obs_preds) %>%
 
 # VARIABLE IMPORTANCE ----------------------------------------------------------
 
-importance(rf_refit, quantiles = c(0.1, 0.5, 0.9))
-varImpPlot.qrf(rf_refit, quantiles = c(0.1, 0.5, 0.9), symbols = F, color = T, 
-               which.sort = 2)
+imp_dat <- as.data.frame(rf_refit$importance, row.names = FALSE) %>%
+  janitor::clean_names() %>% 
+  mutate(var = rownames(rf_refit$importance) %>% 
+           fct_reorder(., -percent_inc_mse),
+         mse_sd =  rf_refit$importanceSD,
+         up = percent_inc_mse + (0.5 * mse_sd),
+         lo = percent_inc_mse - (0.5 * mse_sd),
+         category = case_when(
+           var %in% c("mean_bathy", "shore_dist", "utm_x", "utm_y", 
+                      "mean_slope") ~ "spatial",
+           var %in% c("det_day", "hour") ~ "temporal",
+           var == "stage_mature" ~ "ontogenetic",
+           TRUE ~ "dynamic"
+         )) %>% 
+  arrange(-percent_inc_mse) 
 
+imp_plot <- ggplot(imp_dat, aes(x = var, y = percent_inc_mse)) +
+  geom_point(aes(fill = category), shape = 21, size = 1.5) +
+  ggsidekick::theme_sleek()#+
+  # scale results in whiskers being not visible
+  # geom_pointrange(aes(ymin = lo, ymax = up))
 
-
-data(mtcars)
-mtcars.rf <- randomForest(mpg ~ ., data=mtcars, ntree=1000,
-                          keep.forest=FALSE, importance=TRUE)
-importance(mtcars.rf)
-importance(mtcars.rf, type=1)
+pdf(here::here("figs", "depth_ml", "importance_quantreg.pdf"),
+    height = 6, width = 8)
+imp_plot
+dev.off()
 
 
 # COUNTERFACTUAL PREDICT -------------------------------------------------------
@@ -136,11 +153,7 @@ importance(mtcars.rf, type=1)
 # generate predictions for maturity stage and different counterfacs (e.g. 
 # most important 3 variables)
 new_dat <- expand.grid(
-  stage_mature = c(0, 1)#,
-  # mean_bathy = seq(0,
-  #                  round(max(train_depth_baked$mean_bathy), 0),
-  #                  length.out = 100)
-) %>%
+  stage_mature = c(0, 1)) %>%
   mutate(mean_bathy = mean(train_depth_baked$mean_bathy),
          utm_x = mean(train_depth_baked$utm_x),
          hour = mean(train_depth_baked$hour),
@@ -196,13 +209,11 @@ plot_list <- purrr::map2(
   }
 )
 
-counterfac_tbl$preds[[4]] %>%
-  mutate(stage_f = as.factor(stage_mature)) %>% 
-  ggplot(., aes(x = shore_dist)) +
-  geom_line(aes(y = mean, color = stage_f), size = 1.5) +
-  geom_ribbon(aes(ymin = lo, ymax = up, fill = stage_f), alpha = 0.4) +
-  ggsidekick::theme_sleek()
 
+pdf(here::here("figs", "depth_ml", "counterfactual_quantreg.pdf"),
+    height = 6, width = 8)
+plot_list
+dev.off()
 
 
 # SPATIAL PREDICT --------------------------------------------------------------
@@ -304,7 +315,8 @@ ggplot() +
   scale_fill_viridis_c(name = "depth") +
   ggsidekick::theme_sleek() +
   facet_wrap(~season) +
-  theme(axis.title = element_blank())
+  theme(axis.title = element_blank()) +
+  labs(title = "Immature Daytime")
 ggplot() + 
   geom_sf(data = coast_utm) +
   geom_raster(data = pred_dat %>% filter(season == "summer", day == "day"), 
@@ -312,7 +324,8 @@ ggplot() +
   scale_fill_viridis_c(name = "depth") +
   ggsidekick::theme_sleek() +
   facet_wrap(~stage_mature) +
-  theme(axis.text = element_blank())
+  theme(axis.text = element_blank()) +
+  labs(title = "Summer Daytime")
 ggplot() + 
   geom_sf(data = coast_utm) +
   geom_raster(data = pred_dat %>% filter(season %in% c("summer"),
@@ -321,7 +334,8 @@ ggplot() +
   scale_fill_viridis_c(name = "depth") +
   ggsidekick::theme_sleek() +
   facet_wrap(~stage_mature) +
-  theme(axis.text = element_blank())
+  theme(axis.text = element_blank()) +
+  labs(title = "Summer Daytime Prediction Interval Width")
 ggplot() + 
   geom_sf(data = coast_utm) +
   geom_raster(data = pred_dat %>% filter(season %in% c("summer"),
@@ -330,5 +344,6 @@ ggplot() +
   scale_fill_viridis_c(name = "depth") +
   ggsidekick::theme_sleek() +
   facet_wrap(~day) +
-  theme(axis.text = element_blank())
+  theme(axis.text = element_blank()) +
+  labs(title = "Mature Summer")
 dev.off()

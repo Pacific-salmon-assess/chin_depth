@@ -30,8 +30,13 @@ time_foo <- function(x) {
 rec <- readRDS(here::here("data", "receivers_all.RDS"))$rec_all 
 
 # life stage estimates
+dum <- readRDS(here::here("data", "acousticOnly_GSI.RDS"))
 stage_dat <- readRDS(here::here("data", "lifestage_df.RDS")) %>% 
-   select(vemco_code, stage_predicted)
+  select(vemco_code, fl, stage_predicted) %>% 
+  left_join(., 
+            dum %>% dplyr::select(vemco_code = acoustic_year, mean_log_e), 
+            by = "vemco_code")
+
 
 # hourly ROMS outputs matched to receiver stations (marine only and some 
 # missing), restricted to 25m strata

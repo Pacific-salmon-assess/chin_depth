@@ -12,6 +12,8 @@ library(tidyverse)
 library(caret)
 library(recipes)
 library(gbm)
+library(future)
+library(furrr)
 
 
 # parallelize based on operating system
@@ -119,16 +121,16 @@ model_tbl$recipe <- purrr::map(
     
     recipe(depth_var ~ ., data = dum) %>% 
       step_impute_knn(all_predictors(), neighbors = 3) %>%
-      step_nzv(all_predictors()) %>% 
+      # step_nzv(all_predictors()) %>% 
       step_dummy(all_predictors(), -all_numeric())
 })
 
 
-imp_train <- prep(model_tbl$recipe[[5]]) %>%
-  bake(.,
-       new_data = model_tbl$train_data[[5]] %>%
-         dplyr::select(-ind_block)) %>%
-  glimpse()
+# imp_train <- prep(model_tbl$recipe[[5]]) %>%
+#   bake(.,
+#        new_data = model_tbl$train_data[[5]] %>%
+#          dplyr::select(-ind_block)) %>%
+#   glimpse()
 
 
 ## shared settings
@@ -139,6 +141,7 @@ ctrl <-   trainControl(
   index = train_folds
 )
 
+
 ## define hyperparameters
 gbm_grid <-  expand.grid(interaction.depth = c(2, 5, 10),
                          n.trees = c(seq(10, 100, by = 10), 150, 200, 250, 300),
@@ -146,13 +149,13 @@ gbm_grid <-  expand.grid(interaction.depth = c(2, 5, 10),
                          n.minobsinnode = c(5, 10, 20))
 
 rf_grid <- expand.grid(tune_length = 6,
-                       n.trees = seq(100, 500, by = 100))
+                       n.trees = seq(100, 1000, by = 200))
 
-sub_tbl <- model_tbl[c(5, 6),]
-
-model = sub_tbl$model_type[[1]]
-recipe = sub_tbl$recipe[[1]]
-train_data = sub_tbl$train_data[[1]]
+# sub_tbl <- model_tbl[c(5, 6),]
+# 
+# model = sub_tbl$model_type[[1]]
+# recipe = sub_tbl$recipe[[1]]
+# train_data = sub_tbl$train_data[[1]]
 
 
 fit_foo <- function(model, recipe, train_data) {
@@ -200,22 +203,26 @@ fit_foo <- function(model, recipe, train_data) {
 }
 
 
+# set up parallel
+plan(multisession, workers = 4)
+
+
 ## fit models (separately)
-gbm_tbl <- model_tbl %>% filter(model_type == "gbm")
-gbm_list <- pmap(list("gbm",
-                      gbm_tbl$recipe,
-                      gbm_tbl$train_data),
-                 .f = fit_foo)
-names(gbm_list) <- gbm_tbl$response
-saveRDS(gbm_list, here::here("data", "model_fits", "gbm_model_comparison.rds"))
+# gbm_tbl <- model_tbl %>% filter(model_type == "gbm")
+# gbm_list <- future_pmap(list("gbm",
+#                              gbm_tbl$recipe,
+#                              gbm_tbl$train_data),
+#                         .f = fit_foo)
+# names(gbm_list) <- gbm_tbl$response
+# saveRDS(gbm_list, here::here("data", "model_fits", "gbm_model_comparison.rds"))
 gbm_list <- readRDS(here::here("data", "model_fits", "gbm_model_comparison.rds"))
 
 
 rf_tbl <- model_tbl %>% filter(model_type == "rf")
-rf_list <- pmap(list("rf",
-                      rf_tbl$recipe,
-                      rf_tbl$train_data),
-                 .f = fit_foo)
+rf_list <- future_pmap(list("rf",
+                            rf_tbl$recipe,
+                            rf_tbl$train_data),
+                       .f = fit_foo)
 names(rf_list) <- rf_tbl$response
 saveRDS(rf_list, here::here("data", "model_fits", "rf_model_comparison.rds"))
 rf_list <- readRDS(here::here("data", "model_fits", "rf_model_comparison.rds"))

@@ -32,10 +32,11 @@ rec <- readRDS(here::here("data", "receivers_all.RDS"))$rec_all
 # life stage estimates
 dum <- readRDS(here::here("data", "acousticOnly_GSI.RDS"))
 stage_dat <- readRDS(here::here("data", "lifestage_df.RDS")) %>% 
-  select(vemco_code, fl, stage_predicted) %>% 
   left_join(., 
             dum %>% dplyr::select(vemco_code = acoustic_year, mean_log_e), 
-            by = "vemco_code")
+            by = "vemco_code") %>% 
+  select(vemco_code, fl, stage_predicted, mean_log_e)  
+  
 
 
 # hourly ROMS outputs matched to receiver stations (marine only and some 
@@ -64,13 +65,17 @@ depth_raw <- readRDS(here::here("data", "detections_all.RDS")) %>%
 
 
 # Add B. Hendricks data
+
+# sampling data 
+hendricks_bio <- readRDS(here::here("data", "hendricks_chin_dat.RDS"))
+  
 # NOTE: differences in receiver formatting may lead to issues...
 # Only correct for maturity based on date, not survival (no terminal detections
 # available)
 depth_combined <- readRDS(here::here("data", "hendricks_depth_dets.RDS")) %>% 
   mutate(receiver_sn = as.character(receiver_sn),
          week = lubridate::week(date_time)) %>%
-  group_by(vemco_code) %>% 
+  group_by(vemco_code) %>%
   mutate(
     max_week = max(week),
     stage = case_when(
@@ -78,13 +83,15 @@ depth_combined <- readRDS(here::here("data", "hendricks_depth_dets.RDS")) %>%
       TRUE ~ "mature")
   ) %>% 
   ungroup() %>% 
+  left_join(., hendricks_bio %>% select(vemco_code, fl, mean_log_e), 
+            by = "vemco_code") %>% 
   dplyr::rename(receiver = receiver_name) %>% 
-  select(-c(week, max_week)) %>% 
+  select(colnames(depth_raw)) %>% 
   rbind(depth_raw, .)
 
-# depth_combined %>% 
+# depth_combined %>%
 #   ggplot(.) +
-#   geom_jitter(aes(x = week, y = depth, colour = stage))
+#   geom_jitter(aes(x = a, y = depth, colour = stage))
 
 # use zone 9 to match prediction grid
 depth_utm <- lonlat_to_utm(depth_combined$longitude, depth_combined$latitude, 
@@ -174,7 +181,7 @@ depth_foo <- function(bin_size = 30) {
                           "day", "night")
      ) %>%
      dplyr::select(
-       vemco_code, stage, receiver:longitude, utm_y, utm_x,
+       vemco_code, fl, mean_log_e, stage, receiver:longitude, utm_y, utm_x,
        mean_bathy:shore_dist,
        u, v, w, roms_temp, zoo,
        region_f, date_time_local, timestamp_n, hour, day_night,

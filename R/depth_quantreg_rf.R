@@ -128,7 +128,7 @@ imp_dat <- as.data.frame(rf_refit$importance, row.names = FALSE) %>%
            var %in% c("mean_bathy", "shore_dist", "utm_x", "utm_y", 
                       "mean_slope") ~ "spatial",
            var %in% c("det_day", "hour") ~ "temporal",
-           var == "stage_mature" ~ "ontogenetic",
+           var %in% c("stage_mature", "fl", "mean_log_e") ~ "biological",
            TRUE ~ "dynamic"
          )) %>% 
   arrange(-percent_inc_mse) 
@@ -140,7 +140,7 @@ imp_plot <- ggplot(imp_dat, aes(x = var, y = percent_inc_mse)) +
   # geom_pointrange(aes(ymin = lo, ymax = up))
 
 pdf(here::here("figs", "depth_ml", "importance_quantreg.pdf"),
-    height = 6, width = 8)
+    height = 6, width = 9)
 imp_plot
 dev.off()
 
@@ -152,6 +152,7 @@ dev.off()
 new_dat <- expand.grid(
   stage_mature = c(0, 1)) %>%
   mutate(mean_bathy = mean(train_depth_baked$mean_bathy),
+         fl = mean(train_depth_baked$fl),
          utm_x = mean(train_depth_baked$utm_x),
          hour = mean(train_depth_baked$hour),
          det_day = mean(train_depth_baked$det_day),
@@ -161,7 +162,8 @@ new_dat <- expand.grid(
          u = mean(train_depth_baked$u),
          v = mean(train_depth_baked$v),
          w = mean(train_depth_baked$w),
-         roms_temp = mean(train_depth_baked$roms_temp))
+         roms_temp = mean(train_depth_baked$roms_temp),
+         mean_log_e = mean(train_depth_baked$mean_log_e))
 
 # make tibble for different counterfacs
 pred_foo <- function(var) {
@@ -189,7 +191,7 @@ pred_foo <- function(var) {
 }
 
 counterfac_tbl <- tibble(
-  var = c("mean_bathy", "hour", "det_day", "shore_dist")) %>% 
+  var = c("mean_bathy", "hour", "det_day", "shore_dist", "fl", "mean_log_e")) %>% 
   mutate(
     preds = purrr::map(var, pred_foo)
   )
@@ -249,7 +251,9 @@ roms_month_means <- readRDS(here::here("data", "depth_dat_nobin.RDS")) %>%
     u = mean(u, na.rm = T),
     roms_temp = mean(roms_temp, na.rm = T),
     v = mean(v, na.rm = T),
-    w = mean(w, na.rm = T)
+    w = mean(w, na.rm = T),
+    fl = mean(fl, na.rm = T),
+    mean_log_e = mean(mean_log_e, na.rm = T)
   ) 
 
 # stratify predictions by non-spatial covariates

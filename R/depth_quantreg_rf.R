@@ -21,25 +21,22 @@ depth_dat_raw <- readRDS(
   mutate(stage = as.factor(stage))
 
 
-# fits from model comparison
-fits <- readRDS(here::here("data", "model_fits", "depth_rf_nobin_list.rds"))
+# fits from model comparison (depth best supported response)
+fits <- readRDS(here::here("data", "model_fits", "rf_model_comparison.rds"))$depth
 
-# bind results together
-fit_results <- purrr::map(fits, function (x) x$results) %>% 
-  bind_rows()
 
 # Model performance similar among tree sizes but peaks at intermediate mtry and 
 # with extratrees split rule. Use 200 trees best model for subsequent 
 # exploration. 
-ggplot(fit_results) +
+ggplot(fits$results) +
   geom_point(aes(x = as.factor(mtry), y = RMSE, color = splitrule)) +
   facet_grid(as.factor(min.node.size)~n_trees, scales = "free_y")
 
-n_trees_in <- fit_results %>% 
+n_trees_in <- fits$results %>% 
   filter(RMSE == min(RMSE)) %>% 
   pull(n_trees)
 
-mtry_in <- fit_results %>% 
+mtry_in <- fits$results %>% 
   filter(RMSE == min(RMSE)) %>% 
   pull(mtry)
 

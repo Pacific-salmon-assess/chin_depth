@@ -55,7 +55,7 @@ depth_dat <- depth_dat_raw %>%
   dplyr::select(
     depth = pos_depth, rel_depth, logit_rel_depth, utm_y, utm_x, 
     hour, det_day, mean_bathy, mean_slope, shore_dist,
-    u, v, w, roms_temp, stage, ind_block
+    u, v, w, roms_temp, fl, mean_log_e, stage, ind_block
   ) 
 
 # split by individual blocking
@@ -126,13 +126,6 @@ model_tbl$recipe <- purrr::map(
 })
 
 
-# imp_train <- prep(model_tbl$recipe[[5]]) %>%
-#   bake(.,
-#        new_data = model_tbl$train_data[[5]] %>%
-#          dplyr::select(-ind_block)) %>%
-#   glimpse()
-
-
 ## shared settings
 train_folds <- groupKFold(model_tbl$train_data[[1]]$ind_block,
                           k = length(unique(model_tbl$train_data[[1]]$ind_block)))
@@ -148,14 +141,8 @@ gbm_grid <-  expand.grid(interaction.depth = c(2, 5, 10),
                          shrinkage = c(0.01, 0.1),
                          n.minobsinnode = c(5, 10, 20))
 
-rf_grid <- expand.grid(tune_length = 6,
-                       n.trees = seq(100, 1000, by = 200))
-
-# sub_tbl <- model_tbl[c(5, 6),]
-# 
-# model = sub_tbl$model_type[[1]]
-# recipe = sub_tbl$recipe[[1]]
-# train_data = sub_tbl$train_data[[1]]
+rf_grid <- expand.grid(tune_length = 10,
+                       n.trees = seq(400, 1400, by = 200))
 
 
 fit_foo <- function(model, recipe, train_data) {
@@ -204,7 +191,7 @@ fit_foo <- function(model, recipe, train_data) {
 
 
 # set up parallel
-plan(multisession, workers = 4)
+plan(multisession, workers = 8)
 
 
 ## fit models (separately)
@@ -212,7 +199,7 @@ plan(multisession, workers = 4)
 # gbm_list <- future_pmap(list("gbm",
 #                              gbm_tbl$recipe,
 #                              gbm_tbl$train_data),
-#                         .f = fit_foo)
+#                         .f = fit_foo, seed = TRUE)
 # names(gbm_list) <- gbm_tbl$response
 # saveRDS(gbm_list, here::here("data", "model_fits", "gbm_model_comparison.rds"))
 gbm_list <- readRDS(here::here("data", "model_fits", "gbm_model_comparison.rds"))
@@ -222,7 +209,8 @@ rf_tbl <- model_tbl %>% filter(model_type == "rf")
 rf_list <- future_pmap(list("rf",
                             rf_tbl$recipe,
                             rf_tbl$train_data),
-                       .f = fit_foo)
+                       .f = fit_foo, 
+                       .options = furrr_options(seed = TRUE))
 names(rf_list) <- rf_tbl$response
 saveRDS(rf_list, here::here("data", "model_fits", "rf_model_comparison.rds"))
 rf_list <- readRDS(here::here("data", "model_fits", "rf_model_comparison.rds"))
@@ -234,7 +222,7 @@ gbm_dat <- map2(names(gbm_list), gbm_list, function (name, x) {
     mutate(response = name)
 }) %>% 
   bind_rows() 
-ggplot(gbm_dat) +
+gbm_hyper_plot <- ggplot(gbm_dat) +
   geom_point(aes(x = n.trees, y = RMSE, color = as.factor(interaction.depth),
                  shape = as.factor(shrinkage))) +
   facet_grid(response~n.minobsinnode, scales = "free_y")
@@ -244,7 +232,7 @@ rf_dat <- map2(names(rf_list), rf_list, function (name, x) {
     mutate(response = name)
 }) %>% 
   bind_rows() 
-ggplot(rf_dat) +
+rf_hyper_plot <- ggplot(rf_dat) +
   geom_point(aes(x = as.factor(mtry), y = RMSE, color = splitrule,
                  shape = as.factor(min.node.size))) +
   facet_grid(response~n_trees, scales = "free_y")
@@ -255,15 +243,24 @@ rf_tbl$top_model <- map(rf_list, function (x) x$top_model)
 gbm_tbl$top_model <- map(gbm_list, function (x) x$top_model) 
 model_tbl <- rbind(rf_tbl, gbm_tbl)
 
+
+# interpolated dataset for GBM predictions
+imp_train <- prep(model_tbl$recipe[[5]]) %>%
+  bake(.,
+       new_data = model_tbl$train_data[[5]] %>%
+         dplyr::select(-ind_block)) 
+
+
+
 # calculate RMSE relative to observations in real space for top models
 real_train <- rf_tbl$train_data[[3]]
 rmse_foo <- function(mod_in,
                      space = c("logit_rel_depth", "rel_depth", "depth"), 
                      model_type) {
   if (model_type == "rf") {
-    # preds <- mod_in$predictions  
-    preds <- predict(mod_in,
-                     data = imp_train %>% select(-depth_var))$predictions
+    preds <- mod_in$predictions
+    # preds <- predict(mod_in,
+    #                  data = imp_train %>% select(-depth_var))$predictions
   } else if (model_type == "gbm") {
     # note that need to apply recipe to training data before using 
     preds <- predict(mod_in,
@@ -278,6 +275,18 @@ rmse_foo <- function(mod_in,
   Metrics::rmse(real_train$depth_var, preds)
 }
 
-pmap(list(model_tbl$top_model, model_tbl$response, model_tbl$model_type), 
-     rmse_foo)
+model_tbl$transformed_rmse <- pmap(list(model_tbl$top_model, 
+                                        model_tbl$response, 
+                                        model_tbl$model_type), 
+                                   rmse_foo) %>% unlist()
 
+## export 
+pdf(here::here("figs", "model_comp", "hyperpar_tuning.pdf"))
+gbm_hyper_plot
+rf_hyper_plot
+dev.off()
+
+write.csv(model_tbl %>% 
+            select(model_type, response, transformed_rmse),
+          here::here("figs", "model_comp", "top_model_transformed_rmse.csv"),
+          row.names = FALSE)

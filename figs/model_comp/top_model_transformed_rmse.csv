@@ -1,0 +1,7 @@
+"model_type","response","transformed_rmse"
+"rf","logit_rel_depth",16.4202643794267
+"rf","rel_depth",14.487705293439
+"rf","depth",12.402500446073
+"gbm","logit_rel_depth",24.1705244369398
+"gbm","rel_depth",22.3675574107757
+"gbm","depth",21.6257568309767

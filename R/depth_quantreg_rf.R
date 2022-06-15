@@ -56,7 +56,7 @@ ind_folds <- data.frame(
 depth_dat <- depth_dat_raw %>% 
   left_join(., ind_folds, by = "vemco_code") %>% 
   dplyr::select(
-    depth = pos_depth, stage, utm_x, utm_y, 
+    depth = pos_depth, fl, mean_log_e, stage, utm_x, utm_y, 
     hour, det_day, mean_bathy, mean_slope, shore_dist,
     u, v, w, roms_temp, ind_block
   ) 
@@ -95,7 +95,7 @@ rf_refit <- quantregForest::quantregForest(
   x = train_depth_baked %>% dplyr::select(-depth),
   y = train_depth_baked$depth,
   data = train_depth_baked,
-  mtry = mtry_in,
+  mtry = 6,
   ntree = 1000,
   importance = TRUE
 )

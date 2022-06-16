@@ -149,10 +149,12 @@ dev.off()
 
 # generate predictions for maturity stage and different counterfacs (e.g. 
 # most important 3 variables)
-new_dat <- expand.grid(
-  stage_mature = c(0, 1)) %>%
+new_dat <- train_depth_baked %>%
+  group_by(stage_mature) %>% 
+  summarize(fl = mean(fl),
+            mean_log_e = mean(mean_log_e)) %>% 
   mutate(mean_bathy = mean(train_depth_baked$mean_bathy),
-         fl = mean(train_depth_baked$fl),
+         #fl = mean(train_depth_baked$fl),
          utm_x = mean(train_depth_baked$utm_x),
          hour = mean(train_depth_baked$hour),
          det_day = mean(train_depth_baked$det_day),
@@ -162,42 +164,72 @@ new_dat <- expand.grid(
          u = mean(train_depth_baked$u),
          v = mean(train_depth_baked$v),
          w = mean(train_depth_baked$w),
-         roms_temp = mean(train_depth_baked$roms_temp),
-         mean_log_e = mean(train_depth_baked$mean_log_e))
+         roms_temp = mean(train_depth_baked$roms_temp)#,
+         #mean_log_e = mean(train_depth_baked$mean_log_e)
+)
 
 # make tibble for different counterfacs
-pred_foo <- function(var) {
-  min_var <- min(train_depth_baked[ , var])
-  max_var <- max(train_depth_baked[ , var])
-  
+pred_foo <- function(var_in) {
   # necessary to deal with string input
-  varname <- ensym(var)
+  varname <- ensym(var_in)
   
-  # expand by inputs
-  preds_in <- expand_grid(stage_mature = c(0, 1),
-                          dum = seq(min_var, max_var, length.out = 100)) %>% 
-    rename(!!varname := dum) %>% 
-    left_join(., 
+  # generate stage-specific means for subset of variables
+  if (var_in %in% c("det_day", "fl", "mean_log_e")) {
+    group_vals <- train_depth_baked %>% 
+      group_by(stage_mature) %>% 
+      summarize(min_v = min(!!varname),
+                max_v = max(!!varname)) 
+  } else {
+    group_vals <- train_depth_baked %>% 
+      summarize(min_v = min(!!varname),
+                max_v = max(!!varname))
+  }
+  
+  # change to dataframe
+  var_seq <- NULL
+  for (i in 1:nrow(group_vals)) {
+    var_seq <- c(var_seq, 
+                 seq(group_vals$min_v[i], group_vals$max_v[i], 
+                     length.out = 100))
+  }
+  if (var_in %in% c("det_day", "fl", "mean_log_e")) {
+    preds_in1 <- data.frame(
+      stage_mature = c(rep(0, 100),
+                       rep(1, 100)),
+      dum = var_seq
+    )
+  } else {
+    preds_in1 <- data.frame(
+      stage_mature = c(rep(0, 100),
+                       rep(1, 100)),
+      dum = rep(var_seq, 2)
+    )
+  }
+  
+  preds_in <- preds_in1 %>% 
+    rename(!!varname := dum) %>%
+    left_join(.,
               # add other variables
-              new_dat %>% select(- {{ var }}),
+              new_dat %>% select(- {{ var_in }}),
               by = "stage_mature")
-  
+   
   # make predictions
   preds_out <- predict(rf_refit, quantiles = c(0.1, 0.5, 0.9),
                        newdata = preds_in, all = TRUE)
   colnames(preds_out) <- c("lo", "mean", "up")
-  cbind(preds_in, preds_out) %>% 
+  cbind(preds_in, preds_out) %>%
     mutate(stage_f = as.factor(stage_mature))
 }
 
 counterfac_tbl <- tibble(
-  var = c("mean_bathy", "hour", "det_day", "shore_dist", "fl", "mean_log_e")) %>% 
+  var_in = c("mean_bathy", "hour", "det_day", "shore_dist", "fl", 
+             "mean_log_e")) %>% 
   mutate(
-    preds = purrr::map(var, pred_foo)
+    preds = purrr::map(var_in, pred_foo)
   )
 
 plot_list <- purrr::map2(
-  counterfac_tbl$var, 
+  counterfac_tbl$var_in, 
   counterfac_tbl$preds, 
   function (var, preds) {
     preds %>%
@@ -209,10 +241,37 @@ plot_list <- purrr::map2(
 )
 
 
+# similar to above but check for seasonal differences in diurnal cycles
+min_hour <- min(train_depth_baked[ , "hour"])
+max_hour <- max(train_depth_baked[ , "hour"])
+
+hr_new_dat <- expand_grid(stage_mature = c(0, 1),
+                        hour = seq(min_hour, max_hour, length.out = 100),
+                        det_day = c(1, 91, 182, 274)) %>% 
+  left_join(., 
+            # add other variables
+            new_dat %>% select(-hour, -det_day),
+            by = "stage_mature")
+
+hr_preds <- predict(rf_refit, quantiles = c(0.1, 0.5, 0.9),
+                     newdata = hr_new_dat, all = TRUE)
+colnames(hr_preds) <- c("lo", "mean", "up")
+diurnal_seasonal_preds <- cbind(hr_new_dat, hr_preds) %>%
+  mutate(stage_f = as.factor(stage_mature)) %>% 
+  ggplot(., aes(x = hour)) +
+  geom_line(aes(y = mean, color = stage_f), size = 1.5) +
+  # geom_ribbon(aes(ymin = lo, ymax = up, fill = stage_f), alpha = 0.4) +
+  ggsidekick::theme_sleek() +
+  facet_wrap(~as.factor(det_day)) +
+  labs(title = "Seasonal Changes in Diurnal Cycle")
+
+
 pdf(here::here("figs", "depth_ml", "counterfactual_quantreg.pdf"),
     height = 6, width = 8)
 plot_list
+diurnal_seasonal_preds
 dev.off()
+
 
 
 # SPATIAL PREDICT --------------------------------------------------------------

@@ -233,7 +233,8 @@ depth_dat2 <- depth_raw %>%
            stage == "immature" ~ "immature",
            TRUE ~ paste(agg, year, sep = "_")
          )) %>%
-  filter(!n_det < 10) %>%
+  filter(!n_det < 10,
+         !is.na(agg)) %>%
   ungroup()
 depth_list <- split(depth_dat2, depth_dat2$plot_group)
 
@@ -241,6 +242,7 @@ depth_list <- split(depth_dat2, depth_dat2$plot_group)
 route_pal <- RColorBrewer::brewer.pal(length(unique(depth_dat2$region)),
                                       "Spectral")
 names(route_pal) <- levels(fct_rev(depth_dat2$region))
+
 
 trim_depth <- depth_dat2 %>%
   filter(vemco_code %in% c("7703_2019", "7707_2019", "7708_2019", "7696_2019",
@@ -265,12 +267,12 @@ depth_plots <- map2(depth_list, names(depth_list), .f = function(x, tit) {
   ggplot(x, aes(x = date_time_local, y = -1 * depth, fill = region)) +
     geom_point(shape = 21, alpha = 0.4) +
     scale_fill_manual(values = route_pal, name = "") +
-    # labs(title = tit, x = "Timestamp", y = "Depth (m)") +
-    lims(y = c(min(depth_dat2$depth), 0)) +
+    labs(title = tit, x = "Timestamp", y = "Depth (m)") +
+    lims(y = c(-1 * max(depth_dat2$depth), 0)) +
     ggsidekick::theme_sleek() +
     facet_wrap(~fct_reorder(fl_code, desc(fl)))
 })
 
-pdf(here::here("figs", "depth", "ind_profiles.pdf"))
+pdf(here::here("figs", "ind_profiles.pdf"))
 depth_plots
 dev.off()

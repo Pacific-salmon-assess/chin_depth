@@ -35,7 +35,7 @@ stage_dat <- readRDS(here::here("data", "lifestage_df.RDS")) %>%
   left_join(., 
             dum %>% dplyr::select(vemco_code = acoustic_year, mean_log_e), 
             by = "vemco_code") %>% 
-  select(vemco_code, fl, stage_predicted, mean_log_e)  
+  select(vemco_code, fl, stage_predicted, mean_log_e, agg)  
   
 
 
@@ -80,7 +80,8 @@ depth_combined <- readRDS(here::here("data", "hendricks_depth_dets.RDS")) %>%
     max_week = max(week),
     stage = case_when(
       max_week > 40 ~ "immature",
-      TRUE ~ "mature")
+      TRUE ~ "mature"),
+    agg = NA
   ) %>% 
   ungroup() %>% 
   left_join(., hendricks_bio %>% select(vemco_code, fl, mean_log_e), 
@@ -222,8 +223,11 @@ saveRDS(depth_dat_null,
 ## DEPTH PROFILES --------------------------------------------------------------
 
 # individual depth distributions by time and terminal location
-depth_dat2 <- depth_dat %>%
-  mutate(n_det = length(unique(date_time_local)),
+depth_dat2 <- depth_raw %>%
+  mutate(date_time_local = lubridate::with_tz(date_time, 
+                                              tzone = "America/Los_Angeles"),
+         year = lubridate::year(date_time_local),
+         n_det = length(unique(date_time)),
          fl_code = as.factor(paste(fl, vemco_code, sep = "_")),
          plot_group = case_when(
            stage == "immature" ~ "immature",
@@ -234,16 +238,15 @@ depth_dat2 <- depth_dat %>%
 depth_list <- split(depth_dat2, depth_dat2$plot_group)
 
 
-
-route_pal <- RColorBrewer::brewer.pal(length(unique(depth_combined$region)),
+route_pal <- RColorBrewer::brewer.pal(length(unique(depth_dat2$region)),
                                       "Spectral")
-names(route_pal) <- levels(fct_rev(depth_dat$region))
+names(route_pal) <- levels(fct_rev(depth_dat2$region))
 
-trim_depth <- depth_combined %>%
+trim_depth <- depth_dat2 %>%
   filter(vemco_code %in% c("7703_2019", "7707_2019", "7708_2019", "7696_2019",
                            "9969_2020", "10017_2020", "7700_2019", "9986_2020",
                            "7921_2019")) %>%
-  ggplot(., aes(x = date_time, y = -1 * depth, fill = region)) +
+  ggplot(., aes(x = date_time_local, y = -1 * depth, fill = region)) +
   geom_point(shape = 21, alpha = 0.4) +
   scale_fill_manual(values = route_pal, name = "") +
   labs(x = "Timestamp", y = "Depth (m)") +
@@ -254,4 +257,20 @@ trim_depth <- depth_combined %>%
 png(here::here("figs", "trim_ind_profiles.png"), width = 8, height = 5,
     res = 200, units = "in")
 trim_depth
+dev.off()
+
+
+# full plot list of absolute depth
+depth_plots <- map2(depth_list, names(depth_list), .f = function(x, tit) {
+  ggplot(x, aes(x = date_time_local, y = -1 * depth, fill = region)) +
+    geom_point(shape = 21, alpha = 0.4) +
+    scale_fill_manual(values = route_pal, name = "") +
+    # labs(title = tit, x = "Timestamp", y = "Depth (m)") +
+    lims(y = c(min(depth_dat2$depth), 0)) +
+    ggsidekick::theme_sleek() +
+    facet_wrap(~fct_reorder(fl_code, desc(fl)))
+})
+
+pdf(here::here("figs", "depth", "ind_profiles.pdf"))
+depth_plots
 dev.off()

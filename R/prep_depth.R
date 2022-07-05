@@ -33,9 +33,10 @@ rec <- readRDS(here::here("data", "receivers_all.RDS"))$rec_all
 dum <- readRDS(here::here("data", "acousticOnly_GSI.RDS"))
 stage_dat <- readRDS(here::here("data", "lifestage_df.RDS")) %>% 
   left_join(., 
-            dum %>% dplyr::select(vemco_code = acoustic_year, mean_log_e), 
+            dum %>% dplyr::select(vemco_code = acoustic_year, mean_log_e, 
+                                  cu_name), 
             by = "vemco_code") %>% 
-  select(vemco_code, fl, stage_predicted, mean_log_e, agg)  
+  select(vemco_code, fl, stage_predicted, mean_log_e, cu_name, agg)  
   
 
 
@@ -80,15 +81,26 @@ depth_combined <- readRDS(here::here("data", "hendricks_depth_dets.RDS")) %>%
     max_week = max(week),
     stage = case_when(
       max_week > 40 ~ "immature",
-      TRUE ~ "mature"),
-    agg = NA
+      TRUE ~ "mature")
   ) %>% 
   ungroup() %>% 
-  left_join(., hendricks_bio %>% select(vemco_code, fl, mean_log_e), 
+  left_join(., 
+            hendricks_bio %>% 
+              select(vemco_code, fl, mean_log_e, cu_name, agg = agg_name), 
             by = "vemco_code") %>% 
   dplyr::rename(receiver = receiver_name) %>% 
   select(colnames(depth_raw)) %>% 
-  rbind(depth_raw, .)
+  rbind(depth_raw, .) %>% 
+  #distinguish between aggregates based on CU 
+  mutate(
+    agg = case_when(
+      grepl("East Vancouver Island", cu_name) ~ "ECVI",
+      grepl("_1.", cu_name) ~ "FraserYear",
+      grepl("_0.", cu_name) ~ "FraserSub",
+      cu_name == "Lower Columbia River" ~ "LowCol",
+      TRUE ~ agg
+    )
+  )
 
 # depth_combined %>%
 #   ggplot(.) +
@@ -182,8 +194,8 @@ depth_foo <- function(bin_size = 30) {
                           "day", "night")
      ) %>%
      dplyr::select(
-       vemco_code, fl, mean_log_e, stage, receiver:longitude, utm_y, utm_x,
-       mean_bathy:shore_dist,
+       vemco_code, cu_name, agg, fl, mean_log_e, stage, receiver:longitude, 
+       utm_y, utm_x, mean_bathy:shore_dist,
        u, v, w, roms_temp, zoo,
        region_f, date_time_local, timestamp_n, hour, day_night,
        det_day, year, pos_depth = depth, rel_depth
@@ -203,21 +215,6 @@ saveRDS(depth_dat_60,
         here::here("data", "depth_dat_60min.RDS"))
 saveRDS(depth_dat_null,
         here::here("data", "depth_dat_nobin.RDS"))
-
-
-## ADD UTMs --------------------------------------------------------------------
-
-# Now added externally in Chin tagging repo
-
-# pred_bathy_grid <- readRDS(here::here("data", "pred_bathy_grid.RDS")) %>% 
-#   rename(longitude = X, latitude = Y)
-# 
-# grid_utm <- lonlat_to_utm(pred_bathy_grid$longitude, pred_bathy_grid$latitude, 
-#                            zone = 10) 
-# pred_bathy_grid$utm_x <- grid_utm$X / 1000
-# pred_bathy_grid$utm_y <- grid_utm$Y / 1000
-# 
-# saveRDS(pred_bathy_grid, here::here("data", "pred_bathy_grid.RDS"))
 
 
 ## DEPTH PROFILES --------------------------------------------------------------

@@ -3,7 +3,9 @@
 #Model comparison (depth_caret_comparison.R) indicates top model is random 
 #forest with moderate number of trees (<200) and fit to untransformed depth 
 #data. Fit equivalent model with interpolated training data and generate 
-#prediction intervals.
+#quantile prediction intervals.
+# July 8 (fit model with stock as covariate w/ very minimal improvement in 
+# performance; fits in depth_quantrf_stock.rds)
 
 
 library(plyr)
@@ -21,25 +23,6 @@ depth_dat_raw <- readRDS(
   mutate(stage = as.factor(stage))
 
 
-# fits from model comparison (depth best supported response)
-fits <- readRDS(here::here("data", "model_fits", "rf_model_comparison.rds"))$depth
-
-
-# Model performance similar among tree sizes but peaks at intermediate mtry and 
-# with extratrees split rule. Use 200 trees best model for subsequent 
-# exploration. 
-ggplot(fits$results) +
-  geom_point(aes(x = as.factor(mtry), y = RMSE, color = splitrule)) +
-  facet_grid(as.factor(min.node.size)~n_trees, scales = "free_y")
-
-n_trees_in <- fits$results %>% 
-  filter(RMSE == min(RMSE)) %>% 
-  pull(n_trees)
-
-mtry_in <- fits$results %>% 
-  filter(RMSE == min(RMSE)) %>% 
-  pull(mtry)
-
 
 ## REFIT -----------------------------------------------------------------------
 
@@ -55,8 +38,9 @@ ind_folds <- data.frame(
 
 depth_dat <- depth_dat_raw %>% 
   left_join(., ind_folds, by = "vemco_code") %>% 
+  mutate(agg = as.factor(agg)) %>% 
   dplyr::select(
-    depth = pos_depth, fl, mean_log_e, stage, utm_x, utm_y, 
+    depth = pos_depth, agg, fl, mean_log_e, stage, utm_x, utm_y, 
     hour, det_day, mean_bathy, mean_slope, shore_dist,
     u, v, w, roms_temp, ind_block
   ) 

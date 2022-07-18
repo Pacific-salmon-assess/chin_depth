@@ -54,7 +54,8 @@ depth_raw <- readRDS(here::here("data", "detections_all.RDS")) %>%
          depth > 0) %>%
   left_join(., 
             rec %>% 
-              dplyr::select(receiver = receiver_name, mean_bathy = mean_depth,
+              dplyr::select(receiver = receiver_name, trim_sn,
+                            mean_bathy = mean_depth,
                             max_bathy = max_depth, mean_slope:shore_dist,
                             marine) %>% 
               distinct(),
@@ -74,7 +75,7 @@ hendricks_bio <- readRDS(here::here("data", "hendricks_chin_dat.RDS"))
 # Only correct for maturity based on date, not survival (no terminal detections
 # available)
 depth_combined <- readRDS(here::here("data", "hendricks_depth_dets.RDS")) %>% 
-  mutate(receiver_sn = as.character(receiver_sn),
+  mutate(trim_sn = as.character(receiver_sn),
          week = lubridate::week(date_time)) %>%
   group_by(vemco_code) %>%
   mutate(
@@ -106,9 +107,9 @@ depth_combined <- readRDS(here::here("data", "hendricks_depth_dets.RDS")) %>%
 #   ggplot(.) +
 #   geom_jitter(aes(x = a, y = depth, colour = stage))
 
-# use zone 9 to match prediction grid
+# NOTE CHECK PRED GRID HAS BEEN CHANGED TO ZONE 10
 depth_utm <- lonlat_to_utm(depth_combined$longitude, depth_combined$latitude, 
-                          zone = 9) 
+                          zone = 10) 
 depth_combined$utm_x <- depth_utm$X / 1000 
 depth_combined$utm_y <- depth_utm$Y / 1000
 
@@ -194,8 +195,8 @@ depth_foo <- function(bin_size = 30) {
                           "day", "night")
      ) %>%
      dplyr::select(
-       vemco_code, cu_name, agg, fl, mean_log_e, stage, receiver:longitude, 
-       utm_y, utm_x, mean_bathy:shore_dist,
+       vemco_code, cu_name, agg, fl, mean_log_e, stage, trim_sn, 
+       receiver:longitude, utm_y, utm_x, mean_bathy:shore_dist,
        u, v, w, roms_temp, zoo,
        region_f, date_time_local, timestamp_n, hour, day_night,
        det_day, year, pos_depth = depth, rel_depth
@@ -215,6 +216,74 @@ saveRDS(depth_dat_60,
         here::here("data", "depth_dat_60min.RDS"))
 saveRDS(depth_dat_null,
         here::here("data", "depth_dat_nobin.RDS"))
+
+
+## CHECK DETS ------------------------------------------------------------------
+
+# one receiver had > 1000 detections 
+depth_dat_null %>% 
+  filter(trim_sn == "108654", year == "2020") %>%
+  group_by(vemco_code) %>% 
+  tally()
+# check tags w/ large number dets
+
+depth_dat_null %>%
+  filter(vemco_code %in% c("10123_2020", "10121_2020")) %>%
+  ggplot(., aes(x = date_time_local, y = -1 * pos_depth, fill = region_f)) +
+  geom_point(shape = 21, alpha = 0.4) +
+  scale_fill_discrete(name = "") +
+  labs(x = "Timestamp", y = "Depth (m)") +
+  ggsidekick::theme_sleek() +
+  facet_wrap(~vemco_code) +
+  theme(legend.position = "top")
+# seems reasonable...
+
+
+## DETECTION MAPS --------------------------------------------------------------
+
+library(maptools)
+library(rmapshaper)
+library(mapdata)
+
+# map data
+w_can <- map_data("worldHires", region = c("usa", "canada")) %>%
+  filter(long < -110) %>%
+  fortify(.)
+coast_plotting <- readRDS(here::here("data",
+                                     "coast_major_river_sf_plotting.RDS"))
+sf::st_crs(coast_plotting) <- 4326
+
+# calculate number of detections by receiver
+rec_dets <- depth_dat_null %>% 
+  group_by(latitude, longitude, trim_sn, year) %>% 
+  summarize(
+    n_dets = n(),
+    .groups = "drop"
+    ) %>% 
+  mutate(
+    det_bin = cut(n_dets, breaks=c(0, 25, 100, 500))
+  )
+  
+  
+rec_plot <- ggplot() +
+  geom_sf(data = coast_plotting, color = "black", fill = "white") +
+  geom_point(data = rec_dets,
+             aes(x = longitude, y = latitude, size = n_dets),
+             shape = 21, fill = "red", alpha = 0.4,
+             inherit.aes = FALSE) +
+  #removes extra border
+  scale_x_continuous(expand = c(0, 0)) +
+  scale_y_continuous(expand = c(0, 0)) +
+  coord_sf(xlim = c(-128, -122.15), ylim = c(46, 51.25)) +
+  labs(x = "", y = "") +
+  ggsidekick::theme_sleek() +
+  theme(panel.background = element_rect(fill = "darkgrey")) +
+  facet_wrap(~year) +
+  guides(fill = guide_legend(), 
+         size = guide_legend()) +
+  scale_size_continuous(name = "Number of \nDetections",
+                        breaks = c(0, 25, 100, 500, 1000)) 
+  
 
 
 ## DEPTH PROFILES --------------------------------------------------------------

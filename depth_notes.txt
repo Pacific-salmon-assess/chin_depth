@@ -1,0 +1,12 @@
+Notes for Chinook depth project
+
+July 20, 2022
+- interpolation of explanatory variables
+	- although ML recipe automatically interpolates explanatory covariates, this includes relationships between likely unrelated variables (e.g. energy density and roms_temp)
+	- instead interpolate data constraining kNN to classes of variables with similar attributes 
+	- energy density interp based on stage, fork length and CU (prep_depth.R)
+	- ROMS data interpolated based on ROMS, year, month, day, hour, lat/lon (prep_roms.R)
+	- NOTE: some detections cannot be interpolated because they have occurred after most recent ROMS extraction (not worth debugging); these will be interpolated w/ ML recipe for now
+- slmrf
+	- experimented with slmrf package which incorporates spatial kriging of random forest residuals (i.e. spatial coordinates are excluded from model fitting and incorporated post-hoc via kriging)
+	- evaluated relative performance using rmse of out of sample predictions (test_depth_baked; subsetted); plain random forest had better performance, marginally so for now continue using rather than more complex workflow

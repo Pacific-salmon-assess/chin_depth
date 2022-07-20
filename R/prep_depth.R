@@ -38,11 +38,15 @@ stage_dat <- readRDS(here::here("data", "lifestage_df.RDS")) %>%
             by = "vemco_code") %>% 
   select(vemco_code, fl, stage_predicted, mean_log_e, cu_name, agg)  
   
+# ~2% of tags lack energy density estimates, interpolate
+interp_stage_dat <- VIM::kNN(stage_dat, k = 5) %>% 
+  select(-ends_with("imp")) 
 
 
 # hourly ROMS outputs matched to receiver stations (marine only and some 
 # missing), restricted to 25m strata
-roms_dat <- readRDS(here::here("data", "roms_25m_depth.RDS")) %>% 
+# UPDATE: missing values replaced via interpolation
+interp_roms_dat <- readRDS(here::here("data", "interp_roms_25m_depth.RDS")) %>% 
   # exclude rho (highly correlated with temperature)
   select(-rho)
 
@@ -61,7 +65,7 @@ depth_raw <- readRDS(here::here("data", "detections_all.RDS")) %>%
               distinct(),
             by = "receiver") %>% 
   filter(marine == "yes") %>% 
-  left_join(., stage_dat %>% dplyr::rename(stage = stage_predicted), 
+  left_join(., interp_stage_dat %>% dplyr::rename(stage = stage_predicted), 
             by = "vemco_code") %>% 
   select(-temp, -flag, -station_name, -marine)
 
@@ -171,8 +175,10 @@ depth_foo <- function(bin_size = 30) {
        det_day = lubridate::yday(date_time_local),
        vemco_code = as.factor(vemco_code)
      ) %>%
+     # add interpolated ROMS data
      left_join(
-       ., roms_dat, 
+       ., 
+       interp_roms_dat, 
        by = c("latitude", "longitude", "day", "month", "year", "hour_int")
      ) %>% 
      filter(
@@ -180,6 +186,7 @@ depth_foo <- function(bin_size = 30) {
        depth < max_bathy
      ) %>% 
      droplevels()
+
    
    # add sunrise/sunset data
    sun_data <- data.frame(date = as.Date(depth_dat2$date_time_local),
@@ -207,8 +214,15 @@ depth_foo <- function(bin_size = 30) {
 depth_dat_null <- depth_foo(bin_size = NULL)
 depth_dat_15 <- depth_foo(bin_size = 15)
 depth_dat_60 <- depth_foo(bin_size = 60)
- 
- 
+
+
+# check which variables have NA and tally
+depth_dat_null %>% 
+  select_if(function(x) any(is.na(x))) %>% 
+  summarise_each(funs(sum(is.na(.))))
+# all ROMS related (n=272) due to detections added after last ROMS extraction
+
+
 # export
 saveRDS(depth_dat_15,
         here::here("data", "depth_dat_15min.RDS"))

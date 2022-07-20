@@ -10,6 +10,7 @@ library(tidyverse)
 depth_raw <- readRDS(here::here("data", "detections_all.RDS")) %>%
   filter(!is.na(depth),
          depth > 0) %>% 
+  left_join(., rec %>% rename(receiver = receiver_name), by = "receiver") %>% 
   select(vemco_code, date_time, latitude, longitude)
 
 # B. Hendricks data
@@ -65,7 +66,7 @@ depth_list <- c(#5,
   25#, 50
   )
 
-roms_dat <- expand.grid(
+roms_dat_out <- expand.grid(
   variable = var_list,
   depth = depth_list
 ) %>% 
@@ -87,7 +88,7 @@ roms_dat <- expand.grid(
 
 
 # export 
-write.csv(roms_dat, here::here("data", "stations_roms_no_infill.csv"),
+write.csv(roms_dat_out, here::here("data", "stations_roms_no_infill.csv"),
           row.names = FALSE)
 
 
@@ -99,47 +100,80 @@ write.csv(roms_dat, here::here("data", "stations_roms_no_infill.csv"),
 # with one another
 
 roms_dat <- read.csv(
-  # here::here("data", "stations_roms_no_infill_25mar22_all.csv")) %>% 
-  here::here("data", "stations_roms_no_infill_10feb22_all.csv")) %>%
-  filter(!value == "-999"#, 
+  here::here("data", "stations_roms_no_infill_25mar22_all.csv")) %>%
+  # here::here("data", "stations_roms_no_infill_10feb22_all.csv")) %>%
+  filter(#!value == "-999"#, 
          # !variable == "rho"
          ) %>% 
   distinct()
 
 
 # histogram of values by depth and variable
-ggplot(roms_dat) +
-  geom_histogram(aes(x = value)) +
-  facet_wrap(~variable, scales = "free") +
-  ggsidekick::theme_sleek()
+# ggplot(roms_dat) +
+#   geom_histogram(aes(x = value)) +
+#   facet_wrap(~variable, scales = "free") +
+#   ggsidekick::theme_sleek()
+# 
+# 
+# # evaluate correlations between depth strata for each variable
+# wide_roms <- roms_dat %>%
+#   pivot_wider(names_from = "depth", names_prefix = "depth_",
+#               values_from = "value") %>%
+#   filter(!is.na(depth_25))
+# 
+# corr_list <- wide_roms %>%
+#   split(., .$variable) %>%
+#   purrr::map2(., names(.), function (x, y) {
+#     corr <- cor(x %>% select(depth_5, depth_25, depth_50))
+#     ggcorrplot::ggcorrplot(corr) +
+#       labs(title = y)
+#   })
+# # u and v highly correlated through depth range; w not correlated at all;
+# # zooplankton shows correlations at 25 m; use 25 for now
 
-
-# evaluate correlations between depth strata for each variable
-wide_roms <- roms_dat %>%
-  pivot_wider(names_from = "depth", names_prefix = "depth_",
-              values_from = "value") %>%
-  filter(!is.na(depth_25))
-
-corr_list <- wide_roms %>%
-  split(., .$variable) %>%
-  purrr::map2(., names(.), function (x, y) {
-    corr <- cor(x %>% select(depth_5, depth_25, depth_50))
-    ggcorrplot::ggcorrplot(corr) +
-      labs(title = y)
-  })
-# u and v highly correlated through depth range; w not correlated at all; 
-# zooplankton shows correlations at 25 m; use 25 for now
-
-roms_25 <- roms_dat %>% 
+roms_25 <- roms_dat %>%
   filter(depth == "25") %>%
   pivot_wider(names_from = "variable", values_from = "value") %>%
-  rename(zoo = zooplankton, latitude = lat, longitude = lon, 
-         hour_int = hour, roms_temp = temp) %>% 
+  rename(zoo = zooplankton, latitude = lat, longitude = lon,
+         hour_int = hour, roms_temp = temp) %>%
   select(-depth, -depthFrac)
 
 
-# export and join to detections data in prep_depth
-saveRDS(roms_25, here::here("data", "roms_25m_depth.RDS"))
+# export both versions and join to detections data in prep_depth
+saveRDS(roms_25 %>% filter(!value == "-999"), 
+        here::here("data", "roms_25m_depth.RDS"))
+
+
+# missing values due to a) unavailable data and b) delays between ROMS pulls
+
+# join with receiver data (includes bathymetric variables) and interpolate using
+# k nearest neighbors
+# NOTE not all current ROMS pulls have associated receiver data but this will be 
+# corrected by next extraction
+rec <- readRDS(here::here("data", "receivers_all.RDS"))$rec_all 
+
+roms_25[roms_25 == "-999"] <- NA
+roms_to_interp <- left_join(
+  roms_25, 
+  rec %>% 
+    select(latitude = station_latitude, longitude = station_longitude,
+           mean_depth:shore_dist) %>% 
+    distinct(),
+  by = c("latitude", "longitude")
+) 
+
+roms_interp <- VIM::kNN(roms_to_interp,
+                        variable = c("v", "u", "rho", "roms_temp", "w", "zoo"),
+                        k = 5)
+
+# remove flags and non-ROMS data
+roms_interp_trim <- roms_interp %>% 
+  select(year:zoo) %>% 
+  glimpse()
+
+
+saveRDS(roms_interp_trim, 
+        here::here("data", "interp_roms_25m_depth.RDS"))
 
 
 ## MISC EXPLORATIONS -----------------------------------------------------------

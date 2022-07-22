@@ -273,12 +273,13 @@ bath_grid_in <- readRDS(here::here("data", "pred_bathy_grid_utm.RDS")) %>%
   mutate(id = row_number()) %>% 
   filter(depth < 400)
 
-bath_recipe <- recipe(id ~ ., 
-                       data = bath_grid_in) %>% 
-  #impute missing ROMS values
-  step_impute_knn(all_predictors(), neighbors = 3) %>% 
-  prep()
-bath_grid <- bake(bath_recipe, new_data = NULL) %>% 
+# interpolated externally now
+# bath_recipe <- recipe(id ~ ., 
+#                        data = bath_grid_in) %>% 
+#   #impute missing ROMS values
+#   step_impute_knn(all_predictors(), neighbors = 3) %>% 
+#   prep()
+bath_grid <- bath_grid_in %>% #bake(bath_recipe, new_data = NULL) %>% 
   mutate(utm_x = X / 1000,
          utm_y = Y / 1000) %>% 
   select(utm_x, utm_y, mean_bathy = depth, mean_slope = slope, shore_dist)

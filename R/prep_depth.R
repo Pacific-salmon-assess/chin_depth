@@ -1,4 +1,5 @@
 ### Prep detections data for depth-specific analyses
+### Also generate relevant non-modeling figures
 ## Jan. 13, 2022
 
 library(tidyverse)
@@ -253,7 +254,7 @@ depth_dat_null %>%
 # seems reasonable...
 
 
-## DETECTION MAPS --------------------------------------------------------------
+## DETECTION/BATHY MAPS --------------------------------------------------------
 
 library(maptools)
 library(rmapshaper)
@@ -266,6 +267,10 @@ w_can <- map_data("worldHires", region = c("usa", "canada")) %>%
 coast_plotting <- readRDS(here::here("data",
                                      "coast_major_river_sf_plotting.RDS"))
 sf::st_crs(coast_plotting) <- 4326
+
+# detections cleaned above
+depth_dat_null <- readRDS(here::here("data", "depth_dat_nobin.RDS"))
+
 
 # calculate number of detections by receiver
 rec_dets <- depth_dat_null %>% 
@@ -291,13 +296,61 @@ rec_plot <- ggplot() +
   coord_sf(xlim = c(-128, -122.15), ylim = c(46, 51.25)) +
   labs(x = "", y = "") +
   ggsidekick::theme_sleek() +
-  theme(panel.background = element_rect(fill = "darkgrey")) +
+  theme(panel.background = element_rect(fill = "darkgrey"),
+        legend.position = "top") +
   facet_wrap(~year) +
   guides(fill = guide_legend(), 
          size = guide_legend()) +
   scale_size_continuous(name = "Number of \nDetections",
                         breaks = c(0, 25, 100, 500, 1000)) 
-  
+
+png(here::here("figs", "ms_figs", "rec_locations.png"),
+    height = 5, width = 7, res = 250, units = "in")
+rec_plot
+dev.off()
+
+
+# utm grid for bathymetry maps
+coast_utm <- coast_plotting %>% 
+  sf::st_crop(., 
+              xmin = -127.5, ymin = 46, xmax = -122, ymax = 49.5) %>% 
+  sf::st_transform(., crs = sp::CRS("+proj=utm +zone=10 +units=m"))
+
+
+bath_grid <- readRDS(here::here("data", "pred_bathy_grid_utm.RDS")) %>% 
+  mutate(id = row_number(),
+         shore_dist_km = shore_dist / 1000) %>% 
+  filter(depth < 400)
+
+blank_p <- ggplot() + 
+  geom_sf(data = coast_utm) +
+  ggsidekick::theme_sleek() +
+  theme(axis.title = element_blank(),
+        legend.position = "top") 
+
+depth_plot <- blank_p +
+  geom_raster(data = bath_grid, 
+              aes(x = X, y = Y, fill = depth)) +
+  scale_fill_viridis_c(name = "Depth (m)") 
+slope_plot <- blank_p +
+  geom_raster(data = bath_grid, 
+              aes(x = X, y = Y, fill = slope)) +
+  scale_fill_viridis_c(name = "Slope\n(degrees)") 
+dist_plot <- blank_p +
+  geom_raster(data = bath_grid, 
+              aes(x = X, y = Y, fill = shore_dist_km)) +
+  scale_fill_viridis_c(name = "Distance\nto Coast (km)") 
+
+bathy_vars <- cowplot::plot_grid(
+  plotlist = list(depth_plot, slope_plot, dist_plot),
+  nrow = 1
+  )
+
+
+png(here::here("figs", "ms_figs", "bathy_preds.png"),
+    height = 5, width = 8, res = 250, units = "in")
+bathy_vars
+dev.off()
 
 
 ## DEPTH PROFILES --------------------------------------------------------------

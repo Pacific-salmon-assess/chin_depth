@@ -38,9 +38,8 @@ ind_folds <- data.frame(
 
 depth_dat <- depth_dat_raw %>% 
   left_join(., ind_folds, by = "vemco_code") %>% 
-  mutate(agg = as.factor(agg)) %>% 
   dplyr::select(
-    depth = pos_depth, agg, fl, mean_log_e, stage, utm_x, utm_y, 
+    depth = pos_depth, fl, mean_log_e, stage, utm_x, utm_y, 
     hour, det_day, mean_bathy, mean_slope, shore_dist,
     u, v, w, roms_temp, ind_block
   ) 
@@ -106,8 +105,8 @@ imp_dat <- as.data.frame(rf_refit$importance, row.names = FALSE) %>%
   mutate(var = rownames(rf_refit$importance) %>% 
            fct_reorder(., -percent_inc_mse),
          mse_sd =  rf_refit$importanceSD,
-         up = percent_inc_mse + (0.5 * mse_sd),
-         lo = percent_inc_mse - (0.5 * mse_sd),
+         up = percent_inc_mse + mse_sd,
+         lo = percent_inc_mse - mse_sd,
          category = case_when(
            var %in% c("mean_bathy", "shore_dist", "utm_x", "utm_y", 
                       "mean_slope") ~ "spatial",
@@ -117,11 +116,12 @@ imp_dat <- as.data.frame(rf_refit$importance, row.names = FALSE) %>%
          )) %>% 
   arrange(-percent_inc_mse) 
 
-imp_plot <- ggplot(imp_dat, aes(x = var, y = percent_inc_mse)) +
-  geom_point(aes(fill = category), shape = 21, size = 1.5) +
-  ggsidekick::theme_sleek()#+
+imp_plot <- ggplot(imp_dat, aes(y = fct_reorder(var, percent_inc_mse),
+                                x = percent_inc_mse)) +
+  geom_point(aes(fill = category), shape = 21) +
+  ggsidekick::theme_sleek() #+
   # scale results in whiskers being not visible
-  # geom_pointrange(aes(ymin = lo, ymax = up))
+  # geom_pointrange(aes(ymin = lo, ymax = up), shape = 21)
 
 pdf(here::here("figs", "depth_ml", "importance_quantreg.pdf"),
     height = 6, width = 9)
@@ -266,7 +266,7 @@ coast_utm <- rbind(rnaturalearth::ne_states( "United States of America",
                    rnaturalearth::ne_states( "Canada", returnclass = "sf")) %>% 
   sf::st_crop(., 
               xmin = -127.5, ymin = 46, xmax = -122, ymax = 49.5) %>% 
-  sf::st_transform(., crs = sp::CRS("+proj=utm +zone=9 +units=m"))
+  sf::st_transform(., crs = sp::CRS("+proj=utm +zone=10 +units=m"))
 
 
 bath_grid_in <- readRDS(here::here("data", "pred_bathy_grid_utm.RDS")) %>% 

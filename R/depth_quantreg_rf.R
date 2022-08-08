@@ -113,18 +113,26 @@ imp_dat <- as.data.frame(rf_refit$importance, row.names = FALSE) %>%
            var %in% c("det_day", "hour") ~ "temporal",
            var %in% c("stage_mature", "fl", "mean_log_e") ~ "biological",
            TRUE ~ "dynamic"
-         )) %>% 
+         ),
+         ) %>% 
   arrange(-percent_inc_mse) 
+imp_dat$var_f = factor(
+  imp_dat$var, labels = c("Bottom Depth", "Fork Length", "Year Day", "UTM X",
+                          "Maturity", "Condition", "Shore Distance", "UTM Y",
+                          "Bottom Slope", "Hour", "SST", "H Current 1", "H Current 2",
+                          "V Current")
+)
 
-imp_plot <- ggplot(imp_dat, aes(y = fct_reorder(var, percent_inc_mse),
+imp_plot <- ggplot(imp_dat, aes(y = fct_reorder(var_f, percent_inc_mse),
                                 x = percent_inc_mse)) +
   geom_point(aes(fill = category), shape = 21) +
-  ggsidekick::theme_sleek() #+
+  ggsidekick::theme_sleek() +
+  labs(x = "% Inc. MSE", y = "Covariate")
   # scale results in whiskers being not visible
   # geom_pointrange(aes(ymin = lo, ymax = up), shape = 21)
 
 pdf(here::here("figs", "depth_ml", "importance_quantreg.pdf"),
-    height = 6, width = 9)
+    height = 4, width = 6)
 imp_plot
 dev.off()
 

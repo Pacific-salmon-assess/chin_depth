@@ -131,8 +131,8 @@ imp_plot <- ggplot(imp_dat, aes(y = fct_reorder(var_f, percent_inc_mse),
   # scale results in whiskers being not visible
   # geom_pointrange(aes(ymin = lo, ymax = up), shape = 21)
 
-pdf(here::here("figs", "depth_ml", "importance_quantreg.pdf"),
-    height = 4, width = 6)
+png(here::here("figs", "depth_ml", "importance_quantreg.png"),
+    height = 4, width = 6, units = "in", res = 250)
 imp_plot
 dev.off()
 
@@ -398,4 +398,17 @@ ggplot() +
   facet_wrap(~day) +
   theme(axis.text = element_blank()) +
   labs(title = "Mature Summer")
+dev.off()
+
+png(here::here("figs", "depth_ml", "maturity_depth_preds.png"),
+    height = 4, width = 6, units = "in", res = 250)
+ggplot() + 
+  geom_sf(data = coast_utm) +
+  geom_raster(data = pred_dat %>% filter(season == "summer", day == "day"), 
+              aes(x = utm_x_m, y = utm_y_m, fill = pred_med)) +
+  scale_fill_viridis_c(name = "depth") +
+  ggsidekick::theme_sleek() +
+  facet_wrap(~stage_mature) +
+  theme(axis.text = element_blank()) +
+  labs(title = "Summer Daytime")
 dev.off()

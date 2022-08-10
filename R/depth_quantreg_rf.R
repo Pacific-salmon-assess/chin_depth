@@ -356,59 +356,54 @@ pred_dat <- dat_tbl %>%
          pred_int_width = pred_up - pred_lo) %>% 
   filter(!mean_bathy > 400)
   
-
-pdf(here::here("figs", "depth_ml", "pred_depth_quantreg.pdf"),
-    height = 6, width = 8)
-ggplot() + 
+base_plot <- ggplot() + 
   geom_sf(data = coast_utm) +
+  ggsidekick::theme_sleek() +
+  theme(axis.title = element_blank(),
+        axis.text = element_blank()) 
+
+## all plots are four panel with means and interval width
+# immature/daytime seasonal contrast
+season_mean <- base_plot +
   geom_raster(data = pred_dat %>% filter(stage_mature == "0", day == "day",
-                                    season %in% c("winter", "summer")), 
+                                         season %in% c("winter", "summer")), 
               aes(x = utm_x_m, y = utm_y_m, fill = pred_med)) +
-  scale_fill_viridis_c(name = "depth") +
-  ggsidekick::theme_sleek() +
-  facet_wrap(~season) +
-  theme(axis.title = element_blank()) +
-  labs(title = "Immature Daytime")
-ggplot() + 
-  geom_sf(data = coast_utm) +
-  geom_raster(data = pred_dat %>% filter(season == "summer", day == "day"), 
-              aes(x = utm_x_m, y = utm_y_m, fill = pred_med)) +
-  scale_fill_viridis_c(name = "depth") +
-  ggsidekick::theme_sleek() +
-  facet_wrap(~stage_mature) +
-  theme(axis.text = element_blank()) +
-  labs(title = "Summer Daytime")
-ggplot() + 
-  geom_sf(data = coast_utm) +
-  geom_raster(data = pred_dat %>% filter(season %in% c("summer"),
-                                         day == "day"), 
+  scale_fill_viridis_c(name = "Mean Depth") +
+  facet_wrap(~season)
+season_var <- base_plot +
+  geom_raster(data = pred_dat %>% filter(stage_mature == "0", day == "day",
+                                         season %in% c("winter", "summer")), 
               aes(x = utm_x_m, y = utm_y_m, fill = pred_int_width)) +
-  scale_fill_viridis_c(name = "depth") +
-  ggsidekick::theme_sleek() +
-  facet_wrap(~stage_mature) +
-  theme(axis.text = element_blank()) +
-  labs(title = "Summer Daytime Prediction Interval Width")
-ggplot() + 
-  geom_sf(data = coast_utm) +
-  geom_raster(data = pred_dat %>% filter(season %in% c("summer"),
-                                    stage_mature == "1"), 
-              aes(x = utm_x_m, y = utm_y_m, fill = pred_med)) +
-  scale_fill_viridis_c(name = "depth") +
-  ggsidekick::theme_sleek() +
-  facet_wrap(~day) +
-  theme(axis.text = element_blank()) +
-  labs(title = "Mature Summer")
-dev.off()
+  scale_fill_viridis_c(name = "Prediction\nInterval\nDepth") +
+  facet_wrap(~season)
+season <- cowplot::plot_grid(season_mean, season_var, nrow = 2)
 
-png(here::here("figs", "depth_ml", "maturity_depth_preds.png"),
-    height = 4, width = 6, units = "in", res = 250)
-ggplot() + 
-  geom_sf(data = coast_utm) +
+# summer/day maturity contrast
+mat_mean <- base_plot +
   geom_raster(data = pred_dat %>% filter(season == "summer", day == "day"), 
               aes(x = utm_x_m, y = utm_y_m, fill = pred_med)) +
-  scale_fill_viridis_c(name = "depth") +
-  ggsidekick::theme_sleek() +
-  facet_wrap(~stage_mature) +
-  theme(axis.text = element_blank()) +
-  labs(title = "Summer Daytime")
-dev.off()
+  scale_fill_viridis_c(name = "Mean Depth") +
+  facet_wrap(~stage_mature)
+mat_var <- base_plot +
+  geom_raster(data = pred_dat %>% filter(season == "summer", day == "day"), 
+              aes(x = utm_x_m, y = utm_y_m, fill = pred_int_width)) +
+  scale_fill_viridis_c(name = "Prediction\nInterval\nDepth") +
+  facet_wrap(~stage_mature)
+maturity <- cowplot::plot_grid(mat_mean, mat_var, nrow = 2)
+
+# mature/summer diurnal contrast
+diurnal_mean <-  base_plot +
+  geom_raster(data = pred_dat %>% filter(season %in% c("summer"),
+                                         stage_mature == "1"), 
+              aes(x = utm_x_m, y = utm_y_m, fill = pred_med)) +
+  scale_fill_viridis_c(name = "Mean Depth") +
+  facet_wrap(~day)
+diurnal_var <-  base_plot +
+  geom_raster(data = pred_dat %>% filter(season %in% c("summer"),
+                                         stage_mature == "1"), 
+              aes(x = utm_x_m, y = utm_y_m, fill = pred_int_width)) +
+  scale_fill_viridis_c(name = "Prediction\nInterval\nDepth") +
+  facet_wrap(~day)
+diurnal <- cowplot::plot_grid(diurnal_mean, diurnal_var, nrow = 2)
+
+

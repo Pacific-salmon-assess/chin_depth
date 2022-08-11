@@ -407,3 +407,25 @@ diurnal_var <-  base_plot +
 diurnal <- cowplot::plot_grid(diurnal_mean, diurnal_var, nrow = 2)
 
 
+# SPATIAL RESIDUALS ------------------------------------------------------------
+
+dum <- train_depth_baked %>% 
+  mutate(
+    pred = rf_refit$predicted,
+    resid = pred - depth,
+    season = case_when(
+      det_day >= 1 & det_day < 90 ~ "winter",
+      det_day >= 91 & det_day < 182 ~ "spring",
+      det_day >= 182 & det_day < 274 ~ "summer",
+      det_day >= 274 ~ "fall"
+    ),
+    utm_x_m = utm_x * 1000,
+    utm_y_m = utm_y * 1000
+    )
+
+base_plot +
+  geom_jitter(data = dum, aes(x = utm_x_m, y = utm_y_m, fill = resid),
+              shape = 21) +
+  scale_fill_viridis_c(name = "Residual")
+# no obvious pattern
+

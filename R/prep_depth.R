@@ -20,6 +20,7 @@ lonlat_to_utm <- function(x, y, zone){
     ))
   return(as.data.frame(res))
 }
+
 # function to make hours continuous
 time_foo <- function(x) {
   lubridate::hour(x) + (lubridate::minute(x) / 60) + 
@@ -112,7 +113,6 @@ depth_combined <- readRDS(here::here("data", "hendricks_depth_dets.RDS")) %>%
 #   ggplot(.) +
 #   geom_jitter(aes(x = a, y = depth, colour = stage))
 
-# NOTE CHECK PRED GRID HAS BEEN CHANGED TO ZONE 10
 depth_utm <- lonlat_to_utm(depth_combined$longitude, depth_combined$latitude, 
                           zone = 10) 
 depth_combined$utm_x <- depth_utm$X / 1000 

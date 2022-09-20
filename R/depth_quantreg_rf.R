@@ -105,16 +105,23 @@ imp_dat <- as.data.frame(rf_refit$importance, row.names = FALSE) %>%
   mutate(var = rownames(rf_refit$importance) %>% 
            fct_reorder(., -percent_inc_mse),
          mse_sd =  rf_refit$importanceSD,
-         up = percent_inc_mse + (0.5 * mse_sd),
-         lo = percent_inc_mse - (0.5 * mse_sd),
+         up = percent_inc_mse + mse_sd,
+         lo = percent_inc_mse - mse_sd,
          category = case_when(
            var %in% c("mean_bathy", "shore_dist", "utm_x", "utm_y", 
                       "mean_slope") ~ "spatial",
            var %in% c("det_day", "hour") ~ "temporal",
            var %in% c("stage_mature", "fl", "mean_log_e") ~ "biological",
            TRUE ~ "dynamic"
-         )) %>% 
+         ),
+         ) %>% 
   arrange(-percent_inc_mse) 
+imp_dat$var_f = factor(
+  imp_dat$var, labels = c("Bottom Depth", "Fork Length", "Year Day", "UTM X",
+                          "Maturity", "Condition", "Shore Distance", "UTM Y",
+                          "Bottom Slope", "Hour", "SST", "H Current 1", "H Current 2",
+                          "V Current")
+)
 
 imp_plot <- ggplot(imp_dat, aes(x = var, y = percent_inc_mse)) +
   geom_point(aes(fill = category), shape = 21, size = 2) +
@@ -123,10 +130,10 @@ imp_plot <- ggplot(imp_dat, aes(x = var, y = percent_inc_mse)) +
     axis.text.x = element_text(angle = 45, hjust = 1)
   )
   # scale results in whiskers being not visible
-  # geom_pointrange(aes(ymin = lo, ymax = up))
+  # geom_pointrange(aes(ymin = lo, ymax = up), shape = 21)
 
-pdf(here::here("figs", "depth_ml", "importance_quantreg.pdf"),
-    height = 6, width = 9)
+png(here::here("figs", "depth_ml", "importance_quantreg.png"),
+    height = 4, width = 6, units = "in", res = 250)
 imp_plot
 dev.off()
 
@@ -382,10 +389,7 @@ pred_dat <- dat_tbl %>%
          pred_int_width = pred_up - pred_lo) %>% 
   filter(!mean_bathy > 400)
   
-
-pdf(here::here("figs", "depth_ml", "pred_depth_quantreg.pdf"),
-    height = 6, width = 8)
-ggplot() + 
+base_plot <- ggplot() + 
   geom_sf(data = coast_utm) +
   geom_raster(data = pred_dat %>% filter(stage_mature == "0", 
                                          day == "day",
@@ -396,33 +400,72 @@ ggplot() +
   facet_grid(stage_mature~season) +
   theme(axis.title = element_blank()) +
   labs(title = "Immature Daytime")
-ggplot() + 
-  geom_sf(data = coast_utm) +
+
+
+## all plots are four panel with means and interval width
+# immature/daytime seasonal contrast
+season_mean <- base_plot +
+  geom_raster(data = pred_dat %>% filter(stage_mature == "0", day == "day",
+                                         season %in% c("winter", "summer")), 
+              aes(x = utm_x_m, y = utm_y_m, fill = pred_med)) +
+  scale_fill_viridis_c(name = "Mean Depth") +
+  facet_wrap(~season)
+season_var <- base_plot +
+  geom_raster(data = pred_dat %>% filter(stage_mature == "0", day == "day",
+                                         season %in% c("winter", "summer")), 
+              aes(x = utm_x_m, y = utm_y_m, fill = pred_int_width)) +
+  scale_fill_viridis_c(name = "Prediction\nInterval\nDepth") +
+  facet_wrap(~season)
+season <- cowplot::plot_grid(season_mean, season_var, nrow = 2)
+
+# summer/day maturity contrast
+mat_mean <- base_plot +
   geom_raster(data = pred_dat %>% filter(season == "summer", day == "day"), 
               aes(x = utm_x_m, y = utm_y_m, fill = pred_med)) +
-  scale_fill_viridis_c(name = "depth") +
-  ggsidekick::theme_sleek() +
-  facet_wrap(~stage_mature) +
-  theme(axis.text = element_blank()) +
-  labs(title = "Summer Daytime")
-ggplot() + 
-  geom_sf(data = coast_utm) +
-  geom_raster(data = pred_dat %>% filter(season %in% c("summer"),
-                                         day == "day"), 
+  scale_fill_viridis_c(name = "Mean Depth") +
+  facet_wrap(~stage_mature)
+mat_var <- base_plot +
+  geom_raster(data = pred_dat %>% filter(season == "summer", day == "day"), 
               aes(x = utm_x_m, y = utm_y_m, fill = pred_int_width)) +
-  scale_fill_viridis_c(name = "depth") +
-  ggsidekick::theme_sleek() +
-  facet_wrap(~stage_mature) +
-  theme(axis.text = element_blank()) +
-  labs(title = "Summer Daytime Prediction Interval Width")
-ggplot() + 
-  geom_sf(data = coast_utm) +
+  scale_fill_viridis_c(name = "Prediction\nInterval\nDepth") +
+  facet_wrap(~stage_mature)
+maturity <- cowplot::plot_grid(mat_mean, mat_var, nrow = 2)
+
+# mature/summer diurnal contrast
+diurnal_mean <-  base_plot +
   geom_raster(data = pred_dat %>% filter(season %in% c("summer"),
-                                    stage_mature == "0"), 
+                                         stage_mature == "1"), 
               aes(x = utm_x_m, y = utm_y_m, fill = pred_med)) +
-  scale_fill_viridis_c(name = "depth") +
-  ggsidekick::theme_sleek() +
-  facet_wrap(~day) +
-  theme(axis.text = element_blank()) +
-  labs(title = "Mature Summer")
-dev.off()
+  scale_fill_viridis_c(name = "Mean Depth") +
+  facet_wrap(~day)
+diurnal_var <-  base_plot +
+  geom_raster(data = pred_dat %>% filter(season %in% c("summer"),
+                                         stage_mature == "1"), 
+              aes(x = utm_x_m, y = utm_y_m, fill = pred_int_width)) +
+  scale_fill_viridis_c(name = "Prediction\nInterval\nDepth") +
+  facet_wrap(~day)
+diurnal <- cowplot::plot_grid(diurnal_mean, diurnal_var, nrow = 2)
+
+
+# SPATIAL RESIDUALS ------------------------------------------------------------
+
+dum <- train_depth_baked %>% 
+  mutate(
+    pred = rf_refit$predicted,
+    resid = pred - depth,
+    season = case_when(
+      det_day >= 1 & det_day < 90 ~ "winter",
+      det_day >= 91 & det_day < 182 ~ "spring",
+      det_day >= 182 & det_day < 274 ~ "summer",
+      det_day >= 274 ~ "fall"
+    ),
+    utm_x_m = utm_x * 1000,
+    utm_y_m = utm_y * 1000
+    )
+
+base_plot +
+  geom_jitter(data = dum, aes(x = utm_x_m, y = utm_y_m, fill = resid),
+              shape = 21) +
+  scale_fill_viridis_c(name = "Residual")
+# no obvious pattern
+

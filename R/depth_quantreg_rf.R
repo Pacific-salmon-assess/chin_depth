@@ -38,9 +38,8 @@ ind_folds <- data.frame(
 
 depth_dat <- depth_dat_raw %>% 
   left_join(., ind_folds, by = "vemco_code") %>% 
-  mutate(agg = as.factor(agg)) %>% 
   dplyr::select(
-    depth = pos_depth, agg, fl, mean_log_e, stage, utm_x, utm_y, 
+    depth = pos_depth, fl, mean_log_e, stage, utm_x, utm_y, 
     hour, det_day, mean_bathy, mean_slope, shore_dist,
     u, v, w, roms_temp, ind_block
   ) 
@@ -118,8 +117,11 @@ imp_dat <- as.data.frame(rf_refit$importance, row.names = FALSE) %>%
   arrange(-percent_inc_mse) 
 
 imp_plot <- ggplot(imp_dat, aes(x = var, y = percent_inc_mse)) +
-  geom_point(aes(fill = category), shape = 21, size = 1.5) +
-  ggsidekick::theme_sleek()#+
+  geom_point(aes(fill = category), shape = 21, size = 2) +
+  ggsidekick::theme_sleek() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
   # scale results in whiskers being not visible
   # geom_pointrange(aes(ymin = lo, ymax = up))
 
@@ -135,7 +137,7 @@ dev.off()
 # most important 3 variables)
 new_dat <- train_depth_baked %>%
   group_by(stage_mature) %>% 
-  summarize(fl = mean(fl),
+  dplyr::summarize(fl = mean(fl),
             mean_log_e = mean(mean_log_e)) %>% 
   mutate(mean_bathy = mean(train_depth_baked$mean_bathy),
          #fl = mean(train_depth_baked$fl),
@@ -160,13 +162,13 @@ pred_foo <- function(var_in) {
   # generate stage-specific means for subset of variables
   if (var_in %in% c("det_day", "fl", "mean_log_e")) {
     group_vals <- train_depth_baked %>% 
-      group_by(stage_mature) %>% 
-      summarize(min_v = min(!!varname),
-                max_v = max(!!varname)) 
+      dplyr::group_by(stage_mature) %>% 
+      dplyr::summarize(min_v = min(!!varname),
+                       max_v = max(!!varname)) 
   } else {
     group_vals <- train_depth_baked %>% 
-      summarize(min_v = min(!!varname),
-                max_v = max(!!varname))
+      dplyr::summarize(min_v = min(!!varname),
+                       max_v = max(!!varname))
   }
   
   # change to dataframe
@@ -191,11 +193,11 @@ pred_foo <- function(var_in) {
   }
   
   preds_in <- preds_in1 %>% 
-    rename(!!varname := dum) %>%
+    dplyr::rename(!!varname := dum) %>%
     left_join(.,
               # add other variables
-              new_dat %>% select(- {{ var_in }}),
-              by = "stage_mature")
+              new_dat %>% select(- {{ var_in }}) %>% glimpse(),
+              by = "stage_mature") 
    
   # make predictions
   preds_out <- predict(rf_refit, quantiles = c(0.1, 0.5, 0.9),
@@ -260,18 +262,15 @@ dev.off()
 
 # SPATIAL PREDICT --------------------------------------------------------------
 
-
 coast_utm <- rbind(rnaturalearth::ne_states( "United States of America", 
                                              returnclass = "sf"), 
                    rnaturalearth::ne_states( "Canada", returnclass = "sf")) %>% 
   sf::st_crop(., 
               xmin = -127.5, ymin = 46, xmax = -122, ymax = 49.5) %>% 
-  sf::st_transform(., crs = sp::CRS("+proj=utm +zone=9 +units=m"))
+  sf::st_transform(., crs = sp::CRS("+proj=utm +zone=10 +units=m"))
 
 
-bath_grid_in <- readRDS(here::here("data", "pred_bathy_grid_utm.RDS")) %>% 
-  mutate(id = row_number()) %>% 
-  filter(depth < 400)
+bath_grid_in <- readRDS(here::here("data", "pred_bathy_grid_utm.RDS")) 
 
 # interpolated externally now
 # bath_recipe <- recipe(id ~ ., 
@@ -285,6 +284,14 @@ bath_grid <- bath_grid_in %>% #bake(bath_recipe, new_data = NULL) %>%
   select(utm_x, utm_y, mean_bathy = depth, mean_slope = slope, shore_dist)
 
 
+# generate grid for predicting residual spatial effects (i.e. all variables)
+# at mean value except spatial coords and stage
+rand_bath_grid <- bath_grid %>% 
+  mutate(mean_bathy = mean(mean_bathy),
+         slope = mean(mean_slope),
+         shore_dist = mean(shore_dist),
+         )
+
 # calculate mean roms_variables for different seasons (using monthly averages)
 roms_month_means <- readRDS(here::here("data", "depth_dat_nobin.RDS")) %>% 
   mutate(month = lubridate::month(date_time)) %>% 
@@ -295,10 +302,24 @@ roms_month_means <- readRDS(here::here("data", "depth_dat_nobin.RDS")) %>%
     u = mean(u, na.rm = T),
     roms_temp = mean(roms_temp, na.rm = T),
     v = mean(v, na.rm = T),
-    w = mean(w, na.rm = T),
-    fl = mean(fl, na.rm = T),
-    mean_log_e = mean(mean_log_e, na.rm = T)
+    w = mean(w, na.rm = T)#,
+    # fl = mean(fl, na.rm = T),
+    # mean_log_e = mean(mean_log_e, na.rm = T)
   ) 
+
+# calculate stage-specific biological data
+dum <- readRDS(here::here("data", "acousticOnly_GSI.RDS"))
+stage_dat <- readRDS(here::here("data", "lifestage_df.RDS")) %>% 
+  left_join(., 
+            dum %>% dplyr::select(vemco_code = acoustic_year, mean_log_e), 
+            by = "vemco_code") %>% 
+  group_by(stage) %>% 
+  dplyr::summarize(
+    fl = mean(fl),
+    mean_log_e = mean(mean_log_e)
+  ) %>% 
+  glimpse()
+stage_dat <- chin_da
 
 # stratify predictions by non-spatial covariates
 dat_tbl <- expand_grid(
@@ -308,7 +329,7 @@ dat_tbl <- expand_grid(
   stage_mature = c(0, 1)
 ) %>% 
   mutate(
-    day = fct_recode(as.factor(hour), "day" = "0.5", "night" = "12.5"),
+    day = fct_recode(as.factor(hour), "night" = "0.5", "day" = "12.5"),
     season = fct_recode(as.factor(det_day), "winter" = "1", "spring" = "91",
                         "summer" = "182", "fall" = "274"),
     month = factor(as.factor(det_day), labels = c("1", "4", "7", "10")),
@@ -317,6 +338,18 @@ dat_tbl <- expand_grid(
       list(month, hour, det_day, stage_mature),
       function (w, x, y, z) {
         bath_grid %>%
+          mutate(
+            month = w,
+            hour = x,
+            det_day = y,
+            stage_mature = z) %>%
+          left_join(., roms_month_means, by = "month")
+      }
+    ),
+    pred_rand,grid = purrr::pmap(
+      list(month, hour, det_day, stage_mature),
+      function (w, x, y, z) {
+        rand_bath_grid %>%
           mutate(
             month = w,
             hour = x,
@@ -354,12 +387,13 @@ pdf(here::here("figs", "depth_ml", "pred_depth_quantreg.pdf"),
     height = 6, width = 8)
 ggplot() + 
   geom_sf(data = coast_utm) +
-  geom_raster(data = pred_dat %>% filter(stage_mature == "0", day == "day",
+  geom_raster(data = pred_dat %>% filter(stage_mature == "0", 
+                                         day == "day",
                                     season %in% c("winter", "summer")), 
               aes(x = utm_x_m, y = utm_y_m, fill = pred_med)) +
   scale_fill_viridis_c(name = "depth") +
   ggsidekick::theme_sleek() +
-  facet_wrap(~season) +
+  facet_grid(stage_mature~season) +
   theme(axis.title = element_blank()) +
   labs(title = "Immature Daytime")
 ggplot() + 
@@ -384,7 +418,7 @@ ggplot() +
 ggplot() + 
   geom_sf(data = coast_utm) +
   geom_raster(data = pred_dat %>% filter(season %in% c("summer"),
-                                    stage_mature == "1"), 
+                                    stage_mature == "0"), 
               aes(x = utm_x_m, y = utm_y_m, fill = pred_med)) +
   scale_fill_viridis_c(name = "depth") +
   ggsidekick::theme_sleek() +

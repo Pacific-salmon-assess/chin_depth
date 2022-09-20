@@ -174,7 +174,17 @@ depth_foo <- function(bin_size = 30) {
                                             tzone = "America/Los_Angeles"),
        hour = time_foo(date_time_local),
        det_day = lubridate::yday(date_time_local),
-       vemco_code = as.factor(vemco_code)
+       vemco_code = as.factor(vemco_code),
+       tag_year = str_split(vemco_code, "_") %>% 
+         purrr::map(., function (x) x[2]) %>% 
+         as.numeric(),
+       # redefine stage so that immature fish become mature May 1 of following
+       # year
+       stage = ifelse(
+         stage == "immature" & year > tag_year & det_day > 120,
+         "mature",
+         stage
+       )
      ) %>%
      # add interpolated ROMS data
      left_join(

@@ -198,6 +198,10 @@ depth_foo <- function(bin_size = 30) {
      ) %>% 
      droplevels()
 
+   # add moon data
+   moon_data <- oce::moonAngle(depth_dat2$date_time, 
+                               depth_dat2$longitude, 
+                               depth_dat2$latitude)$illuminatedFraction
    
    # add sunrise/sunset data
    sun_data <- data.frame(date = as.Date(depth_dat2$date_time_local),
@@ -210,13 +214,14 @@ depth_foo <- function(bin_size = 30) {
    cbind(depth_dat2, temp %>% dplyr::select(sunrise, sunset)) %>%
      mutate(
        day_night = ifelse(date_time_local > sunrise & date_time_local < sunset,
-                          "day", "night")
+                          "day", "night"),
+       moon_illuminated = moon_data
      ) %>%
      dplyr::select(
        vemco_code, cu_name, agg, fl, mean_log_e, stage, trim_sn, 
        receiver:longitude, utm_y, utm_x, mean_bathy:shore_dist,
        u, v, w, roms_temp, zoo,
-       region_f, date_time_local, timestamp_n, hour, day_night,
+       region_f, date_time_local, timestamp_n, hour, day_night, moon_illuminated,
        det_day, year, pos_depth = depth, rel_depth
      ) 
   }

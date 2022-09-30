@@ -233,9 +233,9 @@ depth_dat_60 <- depth_foo(bin_size = 60)
 
 
 # check which variables have NA and tally
-depth_dat_null %>% 
-  select_if(function(x) any(is.na(x))) %>% 
-  summarise_each(funs(sum(is.na(.))))
+# depth_dat_null %>% 
+#   select_if(function(x) any(is.na(x))) %>% 
+#   summarise_each(funs(sum(is.na(.))))
 # all ROMS related (n=272) due to detections added after last ROMS extraction
 
 

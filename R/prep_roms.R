@@ -17,6 +17,21 @@ depth_raw <- readRDS(here::here("data", "detections_all.RDS")) %>%
 depth_h <- readRDS(here::here("data", "hendricks_depth_dets.RDS")) %>% 
   select(vemco_code, date_time, latitude, longitude)
 
+# add coordinates in UTM space
+lonlat_to_utm <- function(x, y, zone){
+  xy <- data.frame(ID = 1:length(x), X = x, Y = y)
+  sp::coordinates(xy) <- c("X", "Y")
+  sp::proj4string(xy) <- sp::CRS("+proj=longlat +datum=WGS84")  ## for example
+  res <- sp::spTransform(
+    xy, 
+    sp::CRS(
+      paste("+proj=utm +zone=",zone," +units=m +datum=WGS84 ellps=WGS84",
+            sep = '')
+      
+    ))
+  return(as.data.frame(res))
+}
+
 
 ## EXPORT STATIONS -------------------------------------------------------------
 
@@ -136,12 +151,27 @@ roms_25 <- roms_dat %>%
   pivot_wider(names_from = "variable", values_from = "value") %>%
   rename(zoo = zooplankton, latitude = lat, longitude = lon,
          hour_int = hour, roms_temp = temp) %>%
-  select(-depth, -depthFrac)
+  # add time step variable used during imputation
+  mutate(
+    date = paste(day, month, year, sep = "-"),
+    time = paste(hour_int, "00", sep = ":"),
+    time1 = as.POSIXct("01-07-2019 12:00", form = "%d-%m-%Y %H:%M"),
+    timestamp = paste(date, time, sep = " ") %>% 
+      as.POSIXct(., form = "%d-%m-%Y %H:%M") %>%
+      difftime(time1, timestamp) %>% 
+      as.numeric()
+  ) %>% 
+  select(-depth, -depthFrac, -c(date:time1)) %>% 
+  glimpse()
 
+depth_utm <- lonlat_to_utm(roms_25$longitude, roms_25$latitude, 
+                           zone = 10) 
+roms_25$utm_x <- depth_utm$X / 1000 
+roms_25$utm_y <- depth_utm$Y / 1000
 
 # export both versions and join to detections data in prep_depth
-saveRDS(roms_25 %>% filter(!value == "-999"), 
-        here::here("data", "roms_25m_depth.RDS"))
+# saveRDS(roms_25 %>% filter(!value == "-999"), 
+#         here::here("data", "roms_25m_depth.RDS"))
 
 
 # missing values due to a) unavailable data and b) delays between ROMS pulls
@@ -150,20 +180,22 @@ saveRDS(roms_25 %>% filter(!value == "-999"),
 # k nearest neighbors
 # NOTE not all current ROMS pulls have associated receiver data but this will be 
 # corrected by next extraction
+# NOTE 2: switch to only imputing based on space/time variables, not bathy
 rec <- readRDS(here::here("data", "receivers_all.RDS"))$rec_all 
 
 roms_25[roms_25 == "-999"] <- NA
-roms_to_interp <- left_join(
-  roms_25, 
-  rec %>% 
-    select(latitude = station_latitude, longitude = station_longitude,
-           mean_depth:shore_dist) %>% 
-    distinct(),
-  by = c("latitude", "longitude")
-) 
+# roms_to_interp <- left_join(
+#   roms_25, 
+#   rec %>% 
+#     select(latitude = station_latitude, longitude = station_longitude,
+#            mean_depth:shore_dist) %>% 
+#     distinct(),
+#   by = c("latitude", "longitude")
+# ) 
 
-roms_interp <- VIM::kNN(roms_to_interp,
+roms_interp <- VIM::kNN(roms_25,
                         variable = c("v", "u", "rho", "roms_temp", "w", "zoo"),
+                        dist_var = c("timestamp", "utm_x", "utm_y"),
                         k = 5)
 
 # remove flags and non-ROMS data
@@ -171,9 +203,14 @@ roms_interp_trim <- roms_interp %>%
   select(year:zoo) %>% 
   glimpse()
 
+# old roms interpolated data (distance variables not specified)
+roms_interp_trim_old <- readRDS(here::here("data", "interp_roms_25m_depth.RDS"))
 
-saveRDS(roms_interp_trim, 
-        here::here("data", "interp_roms_25m_depth.RDS"))
+plot(roms_interp_trim_old$roms_temp ~ roms_interp_trim$roms_temp)
+
+
+saveRDS(roms_interp, 
+        here::here("data", "interp_roms_25m_depth_v2.RDS"))
 
 
 ## MISC EXPLORATIONS -----------------------------------------------------------
@@ -203,6 +240,7 @@ length(tt$v[!is.na(tt$v)])
 length(tt$zoo[!is.na(tt$zoo)])
 length(tt$w[!is.na(tt$w)])
 length(tt$rho[!is.na(tt$rho)])
+length(tt$roms_temp[!is.na(tt$roms_temp)])
 # ~3k fewer ROMS detections than other variables; ~30k fewer for zoo (consider
 # removing)
 
@@ -215,3 +253,6 @@ tt %>%
   geom_point(aes(x = value, y = pos_depth, fill = stage), shape = 21) +
   facet_grid(region_f ~ var, scales = "free") +
   ggsidekick::theme_sleek()
+
+
+

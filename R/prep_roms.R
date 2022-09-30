@@ -5,6 +5,8 @@
 
 library(tidyverse)
 
+# receiver data (includes bathymetric data generated in chin_tagging repo)
+rec <- readRDS(here::here("data", "receivers_all.RDS"))$rec_all 
 
 # moderately cleaned detections data (includes depth/temperature sensors)
 depth_raw <- readRDS(here::here("data", "detections_all.RDS")) %>%
@@ -117,9 +119,6 @@ write.csv(roms_dat_out, here::here("data", "stations_roms_no_infill.csv"),
 roms_dat <- read.csv(
   here::here("data", "stations_roms_no_infill_25mar22_all.csv")) %>%
   # here::here("data", "stations_roms_no_infill_10feb22_all.csv")) %>%
-  filter(#!value == "-999"#, 
-         # !variable == "rho"
-         ) %>% 
   distinct()
 
 
@@ -147,7 +146,14 @@ roms_dat <- read.csv(
 # # zooplankton shows correlations at 25 m; use 25 for now
 
 roms_25 <- roms_dat %>%
-  filter(depth == "25") %>%
+  left_join(., 
+            rec %>% 
+              select(lat = station_latitude, lon = station_longitude,
+                     region, mean_depth, mean_slope, shore_dist) %>% 
+              distinct(),
+            by = c("lat", "lon")) %>% 
+  filter(depth == "25",
+         !region == "fraser") %>%
   pivot_wider(names_from = "variable", values_from = "value") %>%
   rename(zoo = zooplankton, latitude = lat, longitude = lon,
          hour_int = hour, roms_temp = temp) %>%
@@ -161,56 +167,58 @@ roms_25 <- roms_dat %>%
       difftime(time1, timestamp) %>% 
       as.numeric()
   ) %>% 
-  select(-depth, -depthFrac, -c(date:time1)) %>% 
-  glimpse()
+  select(-depth, -depthFrac, -c(date:time1))
 
 depth_utm <- lonlat_to_utm(roms_25$longitude, roms_25$latitude, 
                            zone = 10) 
 roms_25$utm_x <- depth_utm$X / 1000 
 roms_25$utm_y <- depth_utm$Y / 1000
 
-# export both versions and join to detections data in prep_depth
-# saveRDS(roms_25 %>% filter(!value == "-999"), 
-#         here::here("data", "roms_25m_depth.RDS"))
-
+# identify proportion fo NA by each ROMS variable
+roms_25 %>% 
+  pivot_longer(., cols = c(v:zoo), names_to = "roms_var") %>% 
+  filter(is.na(value)) %>% 
+  group_by(roms_var) %>% 
+  tally() %>% 
+  mutate(n / nrow(roms_25))
+  
 
 # missing values due to a) unavailable data and b) delays between ROMS pulls
 
-# join with receiver data (includes bathymetric variables) and interpolate using
+# join with receiver data (includes bathymetric variables) and impute using
 # k nearest neighbors
 # NOTE not all current ROMS pulls have associated receiver data but this will be 
 # corrected by next extraction
-# NOTE 2: switch to only imputing based on space/time variables, not bathy
-rec <- readRDS(here::here("data", "receivers_all.RDS"))$rec_all 
 
 roms_25[roms_25 == "-999"] <- NA
-# roms_to_interp <- left_join(
-#   roms_25, 
-#   rec %>% 
-#     select(latitude = station_latitude, longitude = station_longitude,
-#            mean_depth:shore_dist) %>% 
-#     distinct(),
-#   by = c("latitude", "longitude")
-# ) 
 
-roms_interp <- VIM::kNN(roms_25,
+# roms_interp <- VIM::kNN(roms_25,
+#                         variable = c("v", "u", "rho", "roms_temp", "w", "zoo"),
+#                         dist_var = c("timestamp", "utm_x", "utm_y"),
+#                         k = 5)
+roms_interp2 <- VIM::kNN(roms_25,
                         variable = c("v", "u", "rho", "roms_temp", "w", "zoo"),
-                        dist_var = c("timestamp", "utm_x", "utm_y"),
+                        dist_var = c("timestamp", "utm_x", "utm_y",
+                                     "mean_depth", "mean_slope", "shore_dist"),
                         k = 5)
+
+ggplot() +
+  geom_boxplot(data = roms_interp,
+              aes(x = as.factor(month), y = u, fill = u_imp)) +
+  ggsidekick::theme_sleek() +
+  facet_wrap(~region)
+
 
 # remove flags and non-ROMS data
 roms_interp_trim <- roms_interp %>% 
-  select(year:zoo) %>% 
+  select(year:longitude, v:zoo) %>% 
   glimpse()
 
-# old roms interpolated data (distance variables not specified)
-roms_interp_trim_old <- readRDS(here::here("data", "interp_roms_25m_depth.RDS"))
 
-plot(roms_interp_trim_old$roms_temp ~ roms_interp_trim$roms_temp)
-
-
-saveRDS(roms_interp, 
+saveRDS(roms_interp_trim, 
         here::here("data", "interp_roms_25m_depth_v2.RDS"))
+
+
 
 
 ## MISC EXPLORATIONS -----------------------------------------------------------

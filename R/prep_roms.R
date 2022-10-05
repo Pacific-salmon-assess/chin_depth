@@ -58,7 +58,7 @@ depth_dets1 <- rbind(depth_raw, depth_h) %>%
 trim_dets <- depth_dets1 %>% 
   select(year, month, day, hour, lat = latitude, lon = longitude) %>% 
   distinct()
-var_list <- c("u", "v", "w", "temp", "zooplankton", "rho")
+var_list <- c("u", "v", "w", "temp", "zooplankton", "phytoplankton", "oxygen")
 # focus on one depth given strong correlations among them
 depth_list <- c(#5, 
   25#, 50

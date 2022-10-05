@@ -199,7 +199,7 @@ depth_foo <- function(bin_size = 30) {
      droplevels()
 
    # add moon data
-   moon_data <- oce::moonAngle(depth_dat2$date_time, 
+   moon_data <- ode::moonAngle(depth_dat2$date_time, 
                                depth_dat2$longitude, 
                                depth_dat2$latitude)$illuminatedFraction
    

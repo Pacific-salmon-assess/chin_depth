@@ -10,8 +10,13 @@ rec <- readRDS(here::here("data", "receivers_all.RDS"))$rec_all
 
 # moderately cleaned detections data (includes depth/temperature sensors)
 depth_raw <- readRDS(here::here("data", "detections_all.RDS")) %>%
-  filter(!is.na(depth),
-         depth > 0) %>% 
+  filter(
+    !is.na(depth),
+    depth > 0,
+    # remove stations that are freshwater or terminal
+    !station_name == "LakeWashington",
+    !region == "Fraser"
+  ) %>% 
   left_join(., rec %>% rename(receiver = receiver_name), by = "receiver") %>% 
   select(vemco_code, date_time, latitude, longitude)
 
@@ -47,30 +52,6 @@ depth_dets1 <- rbind(depth_raw, depth_h) %>%
     month = lubridate::month(date_time),
     year = lubridate::year(date_time)
   ) 
-
-
-# infill to make continuous for each receiver based on first/last detection
-# currently unused
-# depth_dat_infill <- split(depth_dets1, depth_dets1$receiver) %>% 
-#   purrr::map(., function (x) {
-#     min_day <- format(round(min(x$date_time), units = "hours"))
-#     max_day <- format(round(max(x$date_time) + 3600, units = "hours"))
-#     time_seq <- seq.POSIXt(as.POSIXct(min_day), as.POSIXct(max_day), 
-#                            by = "1 hour")
-#     data.frame(
-#       date_time = time_seq,
-#       receiver = unique(x$receiver),
-#       latitude = unique(x$latitude),
-#       longitude = unique(x$longitude)
-#     ) %>% 
-#       mutate(
-#         hour = lubridate::hour(date_time) + 1,
-#         day = lubridate::day(date_time),
-#         month = lubridate::month(date_time),
-#         year = lubridate::year(date_time)
-#       ) 
-#   }) %>% 
-#   bind_rows()
 
 
 # expand depth dets by different covariates and depths
@@ -181,7 +162,29 @@ roms_25 %>%
   group_by(roms_var) %>% 
   tally() %>% 
   mutate(n / nrow(roms_25))
-  
+
+# plot locations of missing stations
+coast <- readRDS(here::here("data",
+                            "coast_major_river_sf_plotting.RDS")) %>% 
+  sf::st_crop(., 
+              xmin = -127.5, ymin = 46, xmax = -122, ymax = 49.5)
+
+plot_missing_foo <- function(var = "roms_temp") {
+  dum <- roms_25 %>% 
+    filter(is.na(UQ(sym(var)))) %>% 
+    select(latitude, longitude, {{ var }}) %>% 
+    distinct() 
+
+  ggplot() +
+    geom_sf(data = coast) +
+    geom_point(data = dum, aes(x = longitude, y = latitude)) +
+    ggsidekick::theme_sleek()
+}
+
+plot_missing_foo(var = "roms_temp")
+plot_missing_foo(var = "zoo")
+plot_missing_foo(var = "w")
+
 
 # missing values due to a) unavailable data and b) delays between ROMS pulls
 

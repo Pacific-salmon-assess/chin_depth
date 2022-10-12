@@ -280,12 +280,7 @@ coast_utm <- rbind(rnaturalearth::ne_states( "United States of America",
 bath_grid_in <- readRDS(here::here("data", "pred_bathy_grid_utm.RDS")) 
 
 # interpolated externally now
-# bath_recipe <- recipe(id ~ ., 
-#                        data = bath_grid_in) %>% 
-#   #impute missing ROMS values
-#   step_impute_knn(all_predictors(), neighbors = 3) %>% 
-#   prep()
-bath_grid <- bath_grid_in %>% #bake(bath_recipe, new_data = NULL) %>% 
+bath_grid <- bath_grid_in %>% 
   mutate(utm_x = X / 1000,
          utm_y = Y / 1000) %>% 
   select(utm_x, utm_y, mean_bathy = depth, mean_slope = slope, shore_dist)
@@ -309,24 +304,19 @@ roms_month_means <- readRDS(here::here("data", "depth_dat_nobin.RDS")) %>%
     u = mean(u, na.rm = T),
     roms_temp = mean(roms_temp, na.rm = T),
     v = mean(v, na.rm = T),
-    w = mean(w, na.rm = T)#,
-    # fl = mean(fl, na.rm = T),
-    # mean_log_e = mean(mean_log_e, na.rm = T)
-  ) 
+    w = mean(w, na.rm = T)) 
 
 # calculate stage-specific biological data
-dum <- readRDS(here::here("data", "acousticOnly_GSI.RDS"))
-stage_dat <- readRDS(here::here("data", "lifestage_df.RDS")) %>% 
-  left_join(., 
-            dum %>% dplyr::select(vemco_code = acoustic_year, mean_log_e), 
-            by = "vemco_code") %>% 
+stage_dat <- depth_dat_raw %>% 
+  select(vemco_code, fl, mean_log_e, stage) %>% 
+  distinct() %>% 
   group_by(stage) %>% 
   dplyr::summarize(
     fl = mean(fl),
     mean_log_e = mean(mean_log_e)
   ) %>% 
-  glimpse()
-stage_dat <- chin_da
+  mutate(stage_mature = ifelse(stage == "mature", 1, 0))
+
 
 # stratify predictions by non-spatial covariates
 dat_tbl <- expand_grid(
@@ -350,10 +340,11 @@ dat_tbl <- expand_grid(
             hour = x,
             det_day = y,
             stage_mature = z) %>%
+          left_join(., stage_dat %>% select(-stage), by = "stage_mature") %>%
           left_join(., roms_month_means, by = "month")
       }
     ),
-    pred_rand,grid = purrr::pmap(
+    pred_rand_grid = purrr::pmap(
       list(month, hour, det_day, stage_mature),
       function (w, x, y, z) {
         rand_bath_grid %>%
@@ -362,6 +353,7 @@ dat_tbl <- expand_grid(
             hour = x,
             det_day = y,
             stage_mature = z) %>%
+          left_join(., stage_dat %>% select(-stage), by = "stage_mature") %>%
           left_join(., roms_month_means, by = "month")
       }
     ),
@@ -391,15 +383,8 @@ pred_dat <- dat_tbl %>%
   
 base_plot <- ggplot() + 
   geom_sf(data = coast_utm) +
-  geom_raster(data = pred_dat %>% filter(stage_mature == "0", 
-                                         day == "day",
-                                    season %in% c("winter", "summer")), 
-              aes(x = utm_x_m, y = utm_y_m, fill = pred_med)) +
-  scale_fill_viridis_c(name = "depth") +
   ggsidekick::theme_sleek() +
-  facet_grid(stage_mature~season) +
-  theme(axis.title = element_blank()) +
-  labs(title = "Immature Daytime")
+  theme(axis.title = element_blank()) 
 
 
 ## all plots are four panel with means and interval width
@@ -409,13 +394,15 @@ season_mean <- base_plot +
                                          season %in% c("winter", "summer")), 
               aes(x = utm_x_m, y = utm_y_m, fill = pred_med)) +
   scale_fill_viridis_c(name = "Mean Depth") +
-  facet_wrap(~season)
+  facet_wrap(~season) +
+  labs(title = "Immature Season")
 season_var <- base_plot +
   geom_raster(data = pred_dat %>% filter(stage_mature == "0", day == "day",
                                          season %in% c("winter", "summer")), 
               aes(x = utm_x_m, y = utm_y_m, fill = pred_int_width)) +
   scale_fill_viridis_c(name = "Prediction\nInterval\nDepth") +
-  facet_wrap(~season)
+  facet_wrap(~season) +
+  labs(title = "Immature Season")
 season <- cowplot::plot_grid(season_mean, season_var, nrow = 2)
 
 # summer/day maturity contrast
@@ -423,12 +410,14 @@ mat_mean <- base_plot +
   geom_raster(data = pred_dat %>% filter(season == "summer", day == "day"), 
               aes(x = utm_x_m, y = utm_y_m, fill = pred_med)) +
   scale_fill_viridis_c(name = "Mean Depth") +
-  facet_wrap(~stage_mature)
+  facet_wrap(~stage_mature) +
+  labs(title = "Summer Lifestage")
 mat_var <- base_plot +
   geom_raster(data = pred_dat %>% filter(season == "summer", day == "day"), 
               aes(x = utm_x_m, y = utm_y_m, fill = pred_int_width)) +
   scale_fill_viridis_c(name = "Prediction\nInterval\nDepth") +
-  facet_wrap(~stage_mature)
+  facet_wrap(~stage_mature) +
+  labs(title = "Summer Lifestage")
 maturity <- cowplot::plot_grid(mat_mean, mat_var, nrow = 2)
 
 # mature/summer diurnal contrast
@@ -437,14 +426,45 @@ diurnal_mean <-  base_plot +
                                          stage_mature == "1"), 
               aes(x = utm_x_m, y = utm_y_m, fill = pred_med)) +
   scale_fill_viridis_c(name = "Mean Depth") +
-  facet_wrap(~day)
+  facet_wrap(~day) +
+  labs(title = "Mature DVM")
 diurnal_var <-  base_plot +
   geom_raster(data = pred_dat %>% filter(season %in% c("summer"),
                                          stage_mature == "1"), 
               aes(x = utm_x_m, y = utm_y_m, fill = pred_int_width)) +
   scale_fill_viridis_c(name = "Prediction\nInterval\nDepth") +
-  facet_wrap(~day)
+  facet_wrap(~day) +
+  labs(title = "Mature DVM")
 diurnal <- cowplot::plot_grid(diurnal_mean, diurnal_var, nrow = 2)
+
+diurnal_mean2 <-  base_plot +
+  geom_raster(data = pred_dat %>% filter(season %in% c("summer"),
+                                         stage_mature == "0"), 
+              aes(x = utm_x_m, y = utm_y_m, fill = pred_med)) +
+  scale_fill_viridis_c(name = "Mean Depth") +
+  facet_wrap(~day) +
+  labs(title = "Mature DVM")
+
+
+# difference in dvm between stages and seasons
+dvm_dat <- pred_dat %>% 
+  filter(season %in% c("summer", "winter")) %>% 
+  select(stage_mature:shore_dist, utm_x_m, utm_y_m, day, pred_med) %>% 
+  pivot_wider(names_from = day, values_from = pred_med) %>%
+  mutate(dvm_diff = day - night) 
+dvm_mean <-  base_plot +
+  geom_raster(data = dvm_dat, 
+              aes(x = utm_x_m, y = utm_y_m, fill = dvm_diff)) +
+  scale_fill_viridis_c(name = "Mean Depth Diff (DVM)") +
+  facet_wrap(stage_mature~season) +
+  labs(title = "Mature DVM")
+
+pdf(here::here("figs", "depth_ml", "spatial_preds.pdf"))
+season
+maturity
+diurnal
+dvm_mean
+dev.off()
 
 
 # SPATIAL RESIDUALS ------------------------------------------------------------

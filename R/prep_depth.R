@@ -199,7 +199,7 @@ depth_foo <- function(bin_size = 30) {
      droplevels()
 
    # add moon data
-   moon_data <- ode::moonAngle(depth_dat2$date_time, 
+   moon_data <- oce::moonAngle(depth_dat2$date_time, 
                                depth_dat2$longitude, 
                                depth_dat2$latitude)$illuminatedFraction
    
@@ -287,6 +287,22 @@ sf::st_crs(coast_plotting) <- 4326
 depth_dat_null <- readRDS(here::here("data", "depth_dat_nobin.RDS"))
 
 
+# base receiver plot
+base_rec_plot <- ggplot() +
+  geom_sf(data = coast_plotting, color = "black", fill = "white") +
+  #removes extra border
+  scale_x_continuous(expand = c(0, 0)) +
+  scale_y_continuous(expand = c(0, 0)) +
+  coord_sf(xlim = c(-128, -122.15), ylim = c(46, 51.25)) +
+  labs(x = "", y = "") +
+  ggsidekick::theme_sleek() +
+  theme(panel.background = element_rect(fill = "darkgrey"),
+        legend.position = "top") +
+  facet_wrap(~year) +
+  guides(fill = guide_legend(), 
+         size = guide_legend()) 
+
+
 # calculate number of detections by receiver
 rec_dets <- depth_dat_null %>% 
   group_by(latitude, longitude, trim_sn, year) %>% 
@@ -298,30 +314,48 @@ rec_dets <- depth_dat_null %>%
     det_bin = cut(n_dets, breaks=c(0, 25, 100, 500))
   )
   
-  
-rec_plot <- ggplot() +
-  geom_sf(data = coast_plotting, color = "black", fill = "white") +
+rec_plot <- base_rec_plot +
   geom_point(data = rec_dets,
              aes(x = longitude, y = latitude, size = n_dets),
              shape = 21, fill = "red", alpha = 0.4,
              inherit.aes = FALSE) +
-  #removes extra border
-  scale_x_continuous(expand = c(0, 0)) +
-  scale_y_continuous(expand = c(0, 0)) +
-  coord_sf(xlim = c(-128, -122.15), ylim = c(46, 51.25)) +
-  labs(x = "", y = "") +
-  ggsidekick::theme_sleek() +
-  theme(panel.background = element_rect(fill = "darkgrey"),
-        legend.position = "top") +
-  facet_wrap(~year) +
-  guides(fill = guide_legend(), 
-         size = guide_legend()) +
   scale_size_continuous(name = "Number of \nDetections",
                         breaks = c(0, 25, 100, 500, 1000)) 
 
 png(here::here("figs", "ms_figs", "rec_locations.png"),
     height = 5, width = 7, res = 250, units = "in")
 rec_plot
+dev.off()
+
+
+# calculate mean depth by by receiver
+rec_depth <- depth_dat_null %>% 
+  group_by(latitude, longitude, trim_sn, year) %>% 
+  summarize(
+    mean_depth = mean(pos_depth),
+    .groups = "drop"
+  ) %>% 
+  mutate(
+    depth_bin = cut(mean_depth, breaks=c(0, 25, 50, 75, 100, 150, 250))
+  )
+
+rec_plot_depth <- base_rec_plot + 
+  geom_point(data = rec_depth,
+             aes(x = longitude, y = latitude, size = mean_depth),
+             shape = 21, fill = "blue", alpha = 0.2,
+             inherit.aes = FALSE) +
+  scale_size_continuous(name = "Mean Depth of \nDetections",
+                        breaks = c(0, 25, 50, 75, 100, 150, 250)) 
+
+
+png(here::here("figs", "ms_figs", "rec_locations_det.png"),
+    height = 5, width = 7, res = 250, units = "in")
+rec_plot
+dev.off()
+
+png(here::here("figs", "ms_figs", "rec_locations_depth.png"),
+    height = 5, width = 7, res = 250, units = "in")
+rec_plot_depth
 dev.off()
 
 

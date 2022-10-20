@@ -1,6 +1,7 @@
 ### Prep detections data for depth-specific analyses
 ### Also generate relevant non-modeling figures
 ## Jan. 13, 2022
+## DEFUNCT -- combined with ROMS and saved as prep_roms_depth
 
 library(tidyverse)
 
@@ -48,9 +49,7 @@ interp_stage_dat <- VIM::kNN(stage_dat, k = 5) %>%
 # hourly ROMS outputs matched to receiver stations (marine only and some 
 # missing), restricted to 25m strata
 # UPDATE: missing values replaced via interpolation
-interp_roms_dat <- readRDS(here::here("data", "interp_roms_25m_depth.RDS")) %>% 
-  # exclude rho (highly correlated with temperature)
-  select(-rho)
+interp_roms_dat <- readRDS(here::here("data", "interp_roms_25m_depth.RDS")) 
 
 
 # moderately cleaned detections data (includes depth/temperature sensors)
@@ -189,7 +188,7 @@ depth_foo <- function(bin_size = 30) {
      # add interpolated ROMS data
      left_join(
        ., 
-       interp_roms_dat, 
+       interp_roms_dat %>% rename(hour_int = hour), 
        by = c("latitude", "longitude", "day", "month", "year", "hour_int")
      ) %>% 
      filter(
@@ -220,9 +219,9 @@ depth_foo <- function(bin_size = 30) {
      dplyr::select(
        vemco_code, cu_name, agg, fl, mean_log_e, stage, trim_sn, 
        receiver:longitude, utm_y, utm_x, mean_bathy:shore_dist,
-       u, v, w, roms_temp, zoo,
+       u, v, w, roms_temp, zoo, oxygen, thermo_depth,
        region_f, date_time_local, timestamp_n, hour, day_night, moon_illuminated,
-       det_day, year, pos_depth = depth, rel_depth
+       det_day, year, pos_depth = depth, rel_depth, hour_int
      ) 
   }
 
@@ -233,10 +232,10 @@ depth_dat_60 <- depth_foo(bin_size = 60)
 
 
 # check which variables have NA and tally
-# depth_dat_null %>% 
-#   select_if(function(x) any(is.na(x))) %>% 
+# depth_dat_null %>%
+#   select_if(function(x) any(is.na(x))) %>%
 #   summarise_each(funs(sum(is.na(.))))
-# all ROMS related (n=272) due to detections added after last ROMS extraction
+# all ROMS related (n=4694) apparently missing
 
 
 # export

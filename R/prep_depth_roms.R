@@ -426,19 +426,20 @@ depth_dat2 <- cbind(depth_dat, temp %>% dplyr::select(sunrise, sunset)) %>%
 #     select_if(function(x) any(is.na(x))) %>%
 #     summarise_each(funs(sum(is.na(.))))
 
+saveRDS(depth_dat2, here::here("data", "depth_dat_nobin.RDS"))
 
 
 
 ## CHECK DETS ------------------------------------------------------------------
 
 # one receiver had > 1000 detections 
-depth_dat_null %>% 
+depth_dat2 %>% 
   filter(trim_sn == "108654", year == "2020") %>%
   group_by(vemco_code) %>% 
   tally()
 # check tags w/ large number dets
 
-depth_dat_null %>%
+depth_dat2 %>%
   filter(vemco_code %in% c("10123_2020", "10121_2020")) %>%
   ggplot(., aes(x = date_time_local, y = -1 * pos_depth, fill = region_f)) +
   geom_point(shape = 21, alpha = 0.4) +
@@ -465,7 +466,7 @@ coast_plotting <- readRDS(here::here("data",
 sf::st_crs(coast_plotting) <- 4326
 
 # detections cleaned above
-depth_dat_null <- readRDS(here::here("data", "depth_dat_nobin.RDS"))
+depth_dat2 <- readRDS(here::here("data", "depth_dat_nobin.RDS"))
 
 
 # base receiver plot
@@ -485,7 +486,7 @@ base_rec_plot <- ggplot() +
 
 
 # calculate number of detections by receiver
-rec_dets <- depth_dat_null %>% 
+rec_dets <- depth_dat2 %>% 
   group_by(latitude, longitude, trim_sn, year) %>% 
   summarize(
     n_dets = n(),
@@ -510,7 +511,7 @@ dev.off()
 
 
 # calculate mean depth by by receiver
-rec_depth <- depth_dat_null %>% 
+rec_depth <- depth_dat2 %>% 
   group_by(latitude, longitude, trim_sn, year) %>% 
   summarize(
     mean_depth = mean(pos_depth),

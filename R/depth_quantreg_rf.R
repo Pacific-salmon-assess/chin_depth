@@ -20,7 +20,8 @@ library(quantregForest)
 
 depth_dat_raw <- readRDS(
   here::here("data", "depth_dat_nobin.RDS")) %>% 
-  mutate(stage = as.factor(stage))
+  mutate(stage = as.factor(stage)) %>% 
+  filter(!is.na(roms_temp))
 
 
 
@@ -39,9 +40,11 @@ ind_folds <- data.frame(
 depth_dat <- depth_dat_raw %>% 
   left_join(., ind_folds, by = "vemco_code") %>% 
   dplyr::select(
-    depth = pos_depth, fl, mean_log_e, stage, utm_x, utm_y, 
-    hour, det_day, mean_bathy, mean_slope, shore_dist,
-    u, v, w, roms_temp, ind_block
+    depth = pos_depth, fl, mean_log_e, stage, utm_x, utm_y, day_night,
+    #hour = local_hour, 
+    det_day = local_day, mean_bathy, mean_slope, shore_dist,
+    u, v, w, roms_temp, zoo, oxygen, thermo_depth, moon_illuminated,
+    ind_block
   ) 
 
 # split by individual blocking
@@ -82,6 +85,7 @@ rf_refit <- quantregForest::quantregForest(
   ntree = 1000,
   importance = TRUE
 )
+
 saveRDS(rf_refit, here::here("data", "model_fits", "depth_quantrf.rds"))
 rf_refit <- readRDS(here::here("data", "model_fits", "depth_quantrf.rds"))
 
@@ -92,11 +96,21 @@ obs_preds <- predict(rf_refit, quantiles = c(0.1, 0.5, 0.9),
                      newdata = train_depth_baked, all = TRUE)
 colnames(obs_preds) <- c("lo", "mean", "up")
 
-cbind(train_depth_baked, obs_preds) %>% 
-  ggplot(.) +
+dum <- cbind(train_depth_baked, obs_preds) %>% 
+  mutate(resid = depth - mean)
+ggplot(dum) +
   geom_pointrange(aes(x = depth, y = mean, ymin = lo, ymax = up),
                   alpha = 0.3)
 
+# explore strange bifurcation
+dum2 <- dum %>% 
+  filter(abs(resid) > 25) %>% 
+  glimpse()
+
+ggplot(dum2) +
+  geom_pointrange(aes(x = depth, y = mean, ymin = lo, ymax = up,
+                      fill = as.factor(stage_mature)), shape = 21,
+                  alpha = 0.3)
 
 # VARIABLE IMPORTANCE ----------------------------------------------------------
 
@@ -110,17 +124,19 @@ imp_dat <- as.data.frame(rf_refit$importance, row.names = FALSE) %>%
          category = case_when(
            var %in% c("mean_bathy", "shore_dist", "utm_x", "utm_y", 
                       "mean_slope") ~ "spatial",
-           var %in% c("det_day", "hour") ~ "temporal",
+           var %in% c("det_day", "day_night_night") ~ "temporal",
            var %in% c("stage_mature", "fl", "mean_log_e") ~ "biological",
            TRUE ~ "dynamic"
          ),
          ) %>% 
   arrange(-percent_inc_mse) 
 imp_dat$var_f = factor(
-  imp_dat$var, labels = c("Bottom Depth", "Fork Length", "Year Day", "UTM X",
-                          "Maturity", "Condition", "Shore Distance", "UTM Y",
-                          "Bottom Slope", "Hour", "SST", "H Current 1", "H Current 2",
-                          "V Current")
+  imp_dat$var, 
+  labels = c("Bottom Depth", "Fork Length", "Maturity", "Year Day", "UTM Y",
+             "UTM X", "Condition", "Bottom Slope", "Shore Distance", 
+             "Moon Phase", "Zooplankton", "Temperature", "Oxygen",
+             "Thermocline Depth", "H Current 1", "H Current 2", "Day/Night", 
+             "Vertical Current")
 )
 
 imp_plot <- ggplot(imp_dat, aes(x = var, y = percent_inc_mse)) +
@@ -144,22 +160,27 @@ dev.off()
 # most important 3 variables)
 new_dat <- train_depth_baked %>%
   group_by(stage_mature) %>% 
-  dplyr::summarize(fl = mean(fl),
-            mean_log_e = mean(mean_log_e)) %>% 
-  mutate(mean_bathy = mean(train_depth_baked$mean_bathy),
-         #fl = mean(train_depth_baked$fl),
-         utm_x = mean(train_depth_baked$utm_x),
-         hour = mean(train_depth_baked$hour),
-         det_day = mean(train_depth_baked$det_day),
-         utm_y = mean(train_depth_baked$utm_y),
-         mean_slope = mean(train_depth_baked$mean_slope),
-         shore_dist = mean(train_depth_baked$shore_dist),
-         u = mean(train_depth_baked$u),
-         v = mean(train_depth_baked$v),
-         w = mean(train_depth_baked$w),
-         roms_temp = mean(train_depth_baked$roms_temp)#,
-         #mean_log_e = mean(train_depth_baked$mean_log_e)
-)
+  dplyr::summarize(
+    fl = mean(fl),
+    mean_log_e = mean(mean_log_e)
+  ) %>% 
+  mutate(
+    mean_bathy = mean(train_depth_baked$mean_bathy),
+    utm_x = mean(train_depth_baked$utm_x),
+    det_day = mean(train_depth_baked$det_day),
+    utm_y = mean(train_depth_baked$utm_y),
+    mean_slope = mean(train_depth_baked$mean_slope),
+    shore_dist = mean(train_depth_baked$shore_dist),
+    u = mean(train_depth_baked$u),
+    v = mean(train_depth_baked$v),
+    w = mean(train_depth_baked$w),
+    zoo = mean(train_depth_baked$zoo),
+    oxygen = mean(train_depth_baked$oxygen),
+    thermo_depth = mean(train_depth_baked$thermo_depth),
+    roms_temp = mean(train_depth_baked$roms_temp),
+    moon_illuminated = mean(train_depth_baked$moon_illuminated),
+    day_night_night = 0.5
+  )
 
 # make tibble for different counterfacs
 pred_foo <- function(var_in) {
@@ -215,8 +236,9 @@ pred_foo <- function(var_in) {
 }
 
 counterfac_tbl <- tibble(
-  var_in = c("mean_bathy", "hour", "det_day", "shore_dist", "fl", 
-             "mean_log_e")) %>% 
+  var_in = c("mean_bathy", "fl", "det_day", "mean_log_e", "thermo_depth", 
+             "roms_temp", "zoo", "oxygen", "shore_dist", 
+             "moon_illuminated")) %>% 
   mutate(
     preds = purrr::map(var_in, pred_foo)
   )
@@ -234,26 +256,25 @@ plot_list <- purrr::map2(
 )
 
 
-# similar to above but check for seasonal differences in diurnal cycles
-min_hour <- min(train_depth_baked[ , "hour"])
-max_hour <- max(train_depth_baked[ , "hour"])
-
-hr_new_dat <- expand_grid(stage_mature = c(0, 1),
-                        hour = seq(min_hour, max_hour, length.out = 100),
-                        det_day = c(1, 91, 182, 274)) %>% 
+# similar to above but check for diurnal differences
+dn_new_dat <- expand_grid(
+  stage_mature = c(0, 1),
+  day_night_night = c(0, 1),
+  det_day = c(1, 91, 182, 274)
+) %>% 
   left_join(., 
             # add other variables
-            new_dat %>% select(-hour, -det_day),
+            new_dat %>% select(-day_night_night, -det_day),
             by = "stage_mature")
 
-hr_preds <- predict(rf_refit, quantiles = c(0.1, 0.5, 0.9),
-                     newdata = hr_new_dat, all = TRUE)
-colnames(hr_preds) <- c("lo", "mean", "up")
-diurnal_seasonal_preds <- cbind(hr_new_dat, hr_preds) %>%
+dn_preds <- predict(rf_refit, quantiles = c(0.1, 0.5, 0.9),
+                     newdata = dn_new_dat, all = TRUE)
+colnames(dn_preds) <- c("lo", "mean", "up")
+diurnal_seasonal_preds <- cbind(dn_new_dat, dn_preds) %>%
   mutate(stage_f = as.factor(stage_mature)) %>% 
-  ggplot(., aes(x = hour)) +
-  geom_line(aes(y = mean, color = stage_f), size = 1.5) +
-  # geom_ribbon(aes(ymin = lo, ymax = up, fill = stage_f), alpha = 0.4) +
+  ggplot(., aes(x = as.factor(day_night_night))) +
+  geom_pointrange(aes(y = mean, ymin = lo, ymax = up, color = stage_f), 
+                  size = 1.5) +
   ggsidekick::theme_sleek() +
   facet_wrap(~as.factor(det_day)) +
   labs(title = "Seasonal Changes in Diurnal Cycle")
@@ -294,9 +315,10 @@ rand_bath_grid <- bath_grid %>%
          shore_dist = mean(shore_dist),
          )
 
+
 # calculate mean roms_variables for different seasons (using monthly averages)
 roms_month_means <- readRDS(here::here("data", "depth_dat_nobin.RDS")) %>% 
-  mutate(month = lubridate::month(date_time)) %>% 
+  mutate(month = lubridate::month(date_time_local)) %>% 
   filter(month %in% c(1, 4, 7, 10)) %>% 
   mutate(month = as.factor(as.character(month))) %>% 
   group_by(month) %>% 
@@ -304,7 +326,12 @@ roms_month_means <- readRDS(here::here("data", "depth_dat_nobin.RDS")) %>%
     u = mean(u, na.rm = T),
     roms_temp = mean(roms_temp, na.rm = T),
     v = mean(v, na.rm = T),
-    w = mean(w, na.rm = T)) 
+    w = mean(w, na.rm = T),
+    zoo = mean(zoo, na.rm = T),
+    oxygen = mean(oxygen, na.rm = T),
+    thermo_depth = mean(thermo_depth, na.rm = T),
+    moon_illuminated = 0.5) 
+
 
 # calculate stage-specific biological data
 stage_dat <- depth_dat_raw %>% 
@@ -320,24 +347,24 @@ stage_dat <- depth_dat_raw %>%
 
 # stratify predictions by non-spatial covariates
 dat_tbl <- expand_grid(
-  hour = c(0.5, 12.5),
+  day_night_night = c(0, 1),
   # jan 1, apr 1, jul 1, oct 1
   det_day = c(1, 91, 182, 274),
   stage_mature = c(0, 1)
 ) %>% 
   mutate(
-    day = fct_recode(as.factor(hour), "night" = "0.5", "day" = "12.5"),
+    day = fct_recode(as.factor(day_night_night), "night" = "1", "day" = "0"),
     season = fct_recode(as.factor(det_day), "winter" = "1", "spring" = "91",
                         "summer" = "182", "fall" = "274"),
     month = factor(as.factor(det_day), labels = c("1", "4", "7", "10")),
     # create prediction grid based on fixed covariates
     pred_grid = purrr::pmap(
-      list(month, hour, det_day, stage_mature),
+      list(month, day_night_night, det_day, stage_mature),
       function (w, x, y, z) {
         bath_grid %>%
           mutate(
             month = w,
-            hour = x,
+            day_night_night = x,
             det_day = y,
             stage_mature = z) %>%
           left_join(., stage_dat %>% select(-stage), by = "stage_mature") %>%
@@ -345,12 +372,12 @@ dat_tbl <- expand_grid(
       }
     ),
     pred_rand_grid = purrr::pmap(
-      list(month, hour, det_day, stage_mature),
+      list(month, day_night_night, det_day, stage_mature),
       function (w, x, y, z) {
         rand_bath_grid %>%
           mutate(
             month = w,
-            hour = x,
+            day_night_night = x,
             det_day = y,
             stage_mature = z) %>%
           left_join(., stage_dat %>% select(-stage), by = "stage_mature") %>%
@@ -459,7 +486,7 @@ dvm_mean <-  base_plot +
   facet_wrap(stage_mature~season) +
   labs(title = "Mature DVM")
 
-pdf(here::here("figs", "depth_ml", "spatial_preds.pdf"))
+pdf(here::here("figs", "depth_ml", "spatial_preds_v2.pdf"))
 season
 maturity
 diurnal

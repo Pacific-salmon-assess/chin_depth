@@ -133,15 +133,17 @@ imp_dat <- as.data.frame(rf_refit$importance, row.names = FALSE) %>%
 imp_dat$var_f = factor(
   imp_dat$var, 
   labels = c("Bottom Depth", "Fork Length", "Maturity", "Year Day", "UTM Y",
-             "UTM X", "Condition", "Bottom Slope", "Shore Distance", 
-             "Moon Phase", "Zooplankton", "Temperature", "Oxygen",
-             "Thermocline Depth", "H Current 1", "H Current 2", "Day/Night", 
+             "Condition", "UTM X", "Moon Phase", "Bottom Slope", "Zooplankton", 
+             "Shore Distance", "Temperature", "Oxygen",
+             "Thermocline Depth", "Day/Night", "H Current 1", "H Current 2", 
              "Vertical Current")
 )
 
-imp_plot <- ggplot(imp_dat, aes(x = var, y = percent_inc_mse)) +
+imp_plot <- ggplot(imp_dat, aes(x = var_f, y = percent_inc_mse)) +
   geom_point(aes(fill = category), shape = 21, size = 2) +
   ggsidekick::theme_sleek() +
+  labs(x = "Covariate", y = "Relative Importance (Inc. RMSE)") +
+  scale_fill_brewer(type = "qual", palette = "Set1", name = "Category") +
   theme(
     axis.text.x = element_text(angle = 45, hjust = 1)
   )

@@ -24,6 +24,26 @@ depth_dat_raw <- readRDS(
   filter(!is.na(roms_temp))
 
 
+# number of detections
+depth_dat_raw %>% 
+  group_by(vemco_code) %>% 
+  tally() %>% 
+  pull(n) %>% 
+  range()
+
+# calculate timespan overwhich detections provided
+timespan <- depth_dat_raw %>% 
+  group_by(vemco_code) %>% 
+  summarize(
+    min_time = min(date_time_local),
+    max_time = max(date_time_local)
+  ) %>% 
+  mutate(
+    timespan = difftime(max_time, min_time, units = "days")
+  ) %>% 
+  pull(timespan) 
+hist(as.numeric(timespan))  
+
 
 ## REFIT -----------------------------------------------------------------------
 
@@ -41,7 +61,6 @@ depth_dat <- depth_dat_raw %>%
   left_join(., ind_folds, by = "vemco_code") %>% 
   dplyr::select(
     depth = pos_depth, fl, mean_log_e, stage, utm_x, utm_y, day_night,
-    #hour = local_hour, 
     det_day = local_day, mean_bathy, mean_slope, shore_dist,
     u, v, w, roms_temp, zoo, oxygen, thermo_depth, moon_illuminated,
     ind_block
@@ -112,23 +131,25 @@ ggplot(dum2) +
                       fill = as.factor(stage_mature)), shape = 21,
                   alpha = 0.3)
 
+
 # VARIABLE IMPORTANCE ----------------------------------------------------------
 
 imp_dat <- as.data.frame(rf_refit$importance, row.names = FALSE) %>%
   janitor::clean_names() %>% 
-  mutate(var = rownames(rf_refit$importance) %>% 
-           fct_reorder(., -percent_inc_mse),
-         mse_sd =  rf_refit$importanceSD,
-         up = percent_inc_mse + mse_sd,
-         lo = percent_inc_mse - mse_sd,
-         category = case_when(
-           var %in% c("mean_bathy", "shore_dist", "utm_x", "utm_y", 
-                      "mean_slope") ~ "spatial",
-           var %in% c("det_day", "day_night_night") ~ "temporal",
-           var %in% c("stage_mature", "fl", "mean_log_e") ~ "biological",
-           TRUE ~ "dynamic"
-         ),
-         ) %>% 
+  mutate(
+    var = rownames(rf_refit$importance) %>% 
+      fct_reorder(., -percent_inc_mse),
+    mse_sd =  rf_refit$importanceSD,
+    up = percent_inc_mse + mse_sd,
+    lo = percent_inc_mse - mse_sd,
+    category = case_when(
+      var %in% c("mean_bathy", "shore_dist", "utm_x", "utm_y", 
+                 "mean_slope") ~ "spatial",
+      var %in% c("det_day", "day_night_night", "moon_illuminated") ~ "temporal",
+      var %in% c("stage_mature", "fl", "mean_log_e") ~ "biological",
+      TRUE ~ "dynamic"
+    )
+  ) %>% 
   arrange(-percent_inc_mse) 
 imp_dat$var_f = factor(
   imp_dat$var, 
@@ -142,7 +163,7 @@ imp_dat$var_f = factor(
 imp_plot <- ggplot(imp_dat, aes(x = var_f, y = percent_inc_mse)) +
   geom_point(aes(fill = category), shape = 21, size = 2) +
   ggsidekick::theme_sleek() +
-  labs(x = "Covariate", y = "Relative Importance (Inc. RMSE)") +
+  labs(x = "Covariate", y = "Relative Importance") +
   scale_fill_brewer(type = "qual", palette = "Set1", name = "Category") +
   theme(
     axis.text.x = element_text(angle = 45, hjust = 1)
@@ -301,8 +322,6 @@ coast_utm <- rbind(rnaturalearth::ne_states( "United States of America",
 
 
 bath_grid_in <- readRDS(here::here("data", "pred_bathy_grid_utm.RDS")) 
-
-# interpolated externally now
 bath_grid <- bath_grid_in %>% 
   mutate(utm_x = X / 1000,
          utm_y = Y / 1000) %>% 
@@ -331,8 +350,68 @@ roms_month_means <- readRDS(here::here("data", "depth_dat_nobin.RDS")) %>%
     w = mean(w, na.rm = T),
     zoo = mean(zoo, na.rm = T),
     oxygen = mean(oxygen, na.rm = T),
-    thermo_depth = mean(thermo_depth, na.rm = T),
-    moon_illuminated = 0.5) 
+    thermo_depth = mean(thermo_depth, na.rm = T)) 
+
+
+## first set are average spatial predictions (i.e. mean biological and temporal 
+## attributes)
+
+# biological data
+bio_dat <- depth_dat_raw %>% 
+  select(vemco_code, fl, mean_log_e, stage) %>% 
+  distinct()
+
+# stratify predictions by non-spatial covariates
+pred_dat1 <- bath_grid %>% 
+  mutate(
+  day_night_night = 0.5,
+  det_day = 197,
+  moon_illuminated = 0.5,
+  stage_mature = 0.5,
+  month = "7",
+  fl = mean(bio_dat$fl),
+  mean_log_e = mean(bio_dat$mean_log_e)
+) %>% 
+  left_join(roms_month_means, by = "month") 
+
+pred_rf1 <- predict(rf_refit, quantiles = c(0.1, 0.5, 0.9),
+                   newdata = pred_dat1, all = TRUE)
+colnames(pred_rf1) <- c("lo", "med", "up")
+
+pred_dat2 <- pred_dat1 %>%
+  mutate(
+    pred_med = pred_rf1[, "med"],
+    pred_lo = pred_rf1[, "lo"],
+    pred_up = pred_rf1[, "up"],
+    utm_x_m = utm_x * 1000,
+    utm_y_m = utm_y * 1000,
+    pred_int_width = pred_up - pred_lo
+  ) %>% 
+  filter(mean_bathy < 400)
+
+base_plot <- ggplot() + 
+  geom_sf(data = coast_utm) +
+  ggsidekick::theme_sleek() +
+  theme(axis.title = element_blank()) 
+
+mean_depth <- base_plot +
+  geom_raster(data = pred_dat2, 
+              aes(x = utm_x_m, y = utm_y_m, fill = pred_med)) +
+  scale_fill_viridis_c(name = "Mean Depth") +
+  theme(legend.position = "top")
+
+var_depth <- base_plot +
+  geom_raster(data = pred_dat2, 
+              aes(x = utm_x_m, y = utm_y_m, fill = pred_int_width)) +
+  scale_fill_viridis_c(name = "Variation Depth", option = "C")  +
+  theme(legend.position = "top")
+
+avg_depth <- cowplot::plot_grid(mean_depth, var_depth, ncol = 2)
+
+png(here::here("figs", "ms_figs", "avg_depth.png"), height = 5, width = 8, 
+    units = "in", res = 250)
+avg_depth
+dev.off()
 
 
 # calculate stage-specific biological data
@@ -347,24 +426,44 @@ stage_dat <- depth_dat_raw %>%
   mutate(stage_mature = ifelse(stage == "mature", 1, 0))
 
 
+# TO DO WITH AVG 
+# pred_rand_grid = purrr::pmap(
+#   list(month, day_night_night, det_day, stage_mature),
+#   function (w, x, y, z) {
+#     rand_bath_grid %>%
+#       mutate(
+#         month = w,
+#         day_night_night = x,
+#         det_day = y,
+#         stage_mature = z) %>%
+#       left_join(., stage_dat %>% select(-stage), by = "stage_mature") %>%
+#       left_join(., roms_month_means, by = "month")
+#   }
+# ),
+
+
+
+
 # stratify predictions by non-spatial covariates
 dat_tbl <- expand_grid(
   day_night_night = c(0, 1),
   # jan 1, apr 1, jul 1, oct 1
-  det_day = c(1, 91, 182, 274),
-  stage_mature = c(0, 1)
+  det_day = c(16, 106, 197, 289),
+  stage_mature = c(0, 1),
+  moon_illuminated = c(0, 1)
 ) %>% 
   mutate(
     day = fct_recode(as.factor(day_night_night), "night" = "1", "day" = "0"),
-    season = fct_recode(as.factor(det_day), "winter" = "1", "spring" = "91",
-                        "summer" = "182", "fall" = "274"),
+    season = fct_recode(as.factor(det_day), "winter" = "16", "spring" = "106",
+                        "summer" = "197", "fall" = "289"),
     month = factor(as.factor(det_day), labels = c("1", "4", "7", "10")),
     # create prediction grid based on fixed covariates
     pred_grid = purrr::pmap(
-      list(month, day_night_night, det_day, stage_mature),
-      function (w, x, y, z) {
+      list(moon_illuminated, month, day_night_night, det_day, stage_mature),
+      function (v, w, x, y, z) {
         bath_grid %>%
           mutate(
+            moon_illuminated = v,
             month = w,
             day_night_night = x,
             det_day = y,
@@ -373,20 +472,7 @@ dat_tbl <- expand_grid(
           left_join(., roms_month_means, by = "month")
       }
     ),
-    pred_rand_grid = purrr::pmap(
-      list(month, day_night_night, det_day, stage_mature),
-      function (w, x, y, z) {
-        rand_bath_grid %>%
-          mutate(
-            month = w,
-            day_night_night = x,
-            det_day = y,
-            stage_mature = z) %>%
-          left_join(., stage_dat %>% select(-stage), by = "stage_mature") %>%
-          left_join(., roms_month_means, by = "month")
-      }
-    ),
-    #generate predictions
+    # generate predictions
     preds = purrr::map(pred_grid, function (x) {
       pred_rf <- predict(rf_refit, quantiles = c(0.1, 0.5, 0.9),
                          newdata = x, all = TRUE)
@@ -410,10 +496,6 @@ pred_dat <- dat_tbl %>%
          pred_int_width = pred_up - pred_lo) %>% 
   filter(!mean_bathy > 400)
   
-base_plot <- ggplot() + 
-  geom_sf(data = coast_utm) +
-  ggsidekick::theme_sleek() +
-  theme(axis.title = element_blank()) 
 
 
 ## all plots are four panel with means and interval width

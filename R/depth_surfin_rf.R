@@ -5,6 +5,8 @@
 #data. Alternative to depth_quantreg_rf to generate uncertainty estimates
 # See http://shftan.github.io/surfin/demo.html for details
 # Nov. 10, 2022
+## NOTE: surfin estimates seem to diverge from other RF packages (ranger,
+# quantregforest, randomForest); DO NOT USE
 
 
 library(plyr)
@@ -100,63 +102,35 @@ fit <- forest(train_depth_baked, train_depth$depth,
               var.type="ustat", B = 25, ntree = 1000)
 fit2 <- forest(train_depth_baked, train_depth$depth, 
               var.type="infjack", B = 25, ntree = 1000)
+saveRDS(fit2, here::here("data", "model_fits", "surfin_depth_rf.rds"))
+
 rf_fit <- randomForest(train_depth_baked, train_depth$depth, keep.inbag = TRUE, 
                        ntree = 1000) 
 saveRDS(rf_fit, here::here("data", "model_fits", "depth_rf.rds"))
 
 
 # oob predictive performance
-plot(fit$predicted ~ train_depth$depth)
+plot(fit2$predicted ~ train_depth$depth)
 plot(rf_fit$predicted ~ train_depth$depth)
 
-# compare to random forest predictions and quantile random forest predictions
-qr_fit <- readRDS(here::here("data", "model_fits", "depth_quantrf.rds"))
-rf_fit <- readRDS(here::here("data", "model_fits", "depth_rf.rds"))
-
-plot(fit$predicted ~ qr_fit$predicted)
-plot(rf_fit$predicted ~ fit$predicted)
+# poorly correlated with one another
+plot(rf_fit$predicted ~ fit2$predicted)
 plot(fit$predicted ~ fit2$predicted)
 
 
+# compare ranger and qunatile regression
+train_depth_baked <- prep(depth_recipe) %>%
+  bake(., 
+       new_data = train_depth %>% 
+         dplyr::select(-ind_block))
+ranger_rf <- ranger(depth ~ ., data = train_depth_baked, quantreg = TRUE)
+qr_rf <- readRDS(here::here("data", "model_fits", "depth_quantrf.rds"))
 
 
-## variable importance
+qr_preds <- predict(qr_rf, quantiles = c(0.1, 0.5, 0.9),
+                     newdata = train_depth_baked[1:100, ], all = TRUE)
+ranger_preds <- predict(ranger_rf, data = train_depth_baked[1:100, ], 
+                        quantiles = c(0.1, 0.5, 0.9), type = "quantiles")
 
-imp_dat <- as.data.frame(rf_fit$importance, row.names = FALSE) %>%
-  janitor::clean_names() %>% 
-  mutate(
-    var = rownames(rf_fit$importance) %>% 
-      fct_reorder(., -inc_node_purity ),
-    category = case_when(
-      var %in% c("mean_bathy", "shore_dist", "utm_x", "utm_y", 
-                 "mean_slope") ~ "spatial",
-      var %in% c("det_day", "day_night_night", "moon_illuminated") ~ "temporal",
-      var %in% c("stage_mature", "fl", "mean_log_e") ~ "biological",
-      TRUE ~ "dynamic"
-    )
-  ) %>% 
-  arrange(-inc_node_purity) 
-imp_dat$var_f = factor(
-  imp_dat$var, 
-  labels = c("Bottom Depth", "Fork Length", "Maturity", "Year Day", "UTM Y",
-             "Condition", "UTM X", "Moon Phase", "Bottom Slope", "Zooplankton", 
-             "Shore Distance", "Temperature", "Oxygen",
-             "Thermocline Depth", "Day/Night", "H Current 1", "H Current 2", 
-             "Vertical Current")
-)
 
-imp_plot <- ggplot(imp_dat, aes(x = var_f, y = percent_inc_mse)) +
-  geom_point(aes(fill = category), shape = 21, size = 2) +
-  ggsidekick::theme_sleek() +
-  labs(x = "Covariate", y = "Relative Importance") +
-  scale_fill_brewer(type = "qual", palette = "Set1", name = "Category") +
-  theme(
-    axis.text.x = element_text(angle = 45, hjust = 1)
-  )
-# scale results in whiskers being not visible
-# geom_pointrange(aes(ymin = lo, ymax = up), shape = 21)
 
-png(here::here("figs", "depth_ml", "importance_quantreg.png"),
-    height = 4, width = 6, units = "in", res = 250)
-imp_plot
-dev.off()

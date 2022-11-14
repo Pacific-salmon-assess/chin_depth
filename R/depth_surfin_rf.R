@@ -123,7 +123,8 @@ train_depth_baked <- prep(depth_recipe) %>%
   bake(., 
        new_data = train_depth %>% 
          dplyr::select(-ind_block))
-ranger_rf <- ranger(depth ~ ., data = train_depth_baked, quantreg = TRUE)
+ranger_rf <- ranger(depth ~ ., data = train_depth_baked, quantreg = TRUE, 
+                    importance = "permutation")
 qr_rf <- readRDS(here::here("data", "model_fits", "depth_quantrf.rds"))
 
 

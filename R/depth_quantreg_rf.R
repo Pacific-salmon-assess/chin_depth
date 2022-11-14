@@ -20,7 +20,12 @@ library(quantregForest)
 
 depth_dat_raw <- readRDS(
   here::here("data", "depth_dat_nobin.RDS")) %>% 
-  mutate(stage = as.factor(stage)) %>% 
+  mutate(
+    stage = as.factor(stage),
+    #create cyclical time steps representing year day
+    x_time = sin(2 * pi * local_day / 365),
+    y_time = cos(2 * pi * local_day / 365)
+  ) %>% 
   filter(!is.na(roms_temp))
 
 
@@ -61,7 +66,9 @@ depth_dat <- depth_dat_raw %>%
   left_join(., ind_folds, by = "vemco_code") %>% 
   dplyr::select(
     depth = pos_depth, fl, mean_log_e, stage, utm_x, utm_y, day_night,
-    det_day = local_day, mean_bathy, mean_slope, shore_dist,
+    # det_day = local_day,
+    det_dayx = x_time, det_daty = y_time,
+    mean_bathy, mean_slope, shore_dist,
     u, v, w, roms_temp, zoo, oxygen, thermo_depth, moon_illuminated,
     ind_block
   ) 
@@ -79,9 +86,9 @@ depth_recipe <- recipe(depth ~ .,
   step_dummy(all_predictors(), -all_numeric())
 
 
-train_folds <- groupKFold(train_depth$ind_block,
+train_folds <- caret::groupKFold(train_depth$ind_block,
                           k = length(unique(train_depth$ind_block)))
-depth_ctrl <-   trainControl(
+depth_ctrl <-   caret::trainControl(
   method="repeatedcv",
   index = train_folds
 )
@@ -134,6 +141,13 @@ ggplot(dum2) +
 
 # VARIABLE IMPORTANCE ----------------------------------------------------------
 
+imp_dat <- ranger::importance(ranger_rf, type = 1, scale = F) 
+imp_dat2 <- as.data.frame(imp_dat) %>%
+  arrange(imp_dat)
+  # janitor::clean_names() %>% 
+  mutate(
+    var = rownames(imp_dat))
+
 imp_dat <- as.data.frame(rf_refit$importance, row.names = FALSE) %>%
   janitor::clean_names() %>% 
   mutate(
@@ -154,7 +168,7 @@ imp_dat <- as.data.frame(rf_refit$importance, row.names = FALSE) %>%
 imp_dat$var_f = factor(
   imp_dat$var, 
   labels = c("Bottom Depth", "Fork Length", "Maturity", "Year Day", "UTM Y",
-             "Condition", "UTM X", "Moon Phase", "Bottom Slope", "Zooplankton", 
+             "Condition", "UTM X", "Bottom Slope", "Moon Phase", "Zooplankton", 
              "Shore Distance", "Temperature", "Oxygen",
              "Thermocline Depth", "Day/Night", "H Current 1", "H Current 2", 
              "Vertical Current")
@@ -168,8 +182,7 @@ imp_plot <- ggplot(imp_dat, aes(x = var_f, y = percent_inc_mse)) +
   theme(
     axis.text.x = element_text(angle = 45, hjust = 1)
   )
-  # scale results in whiskers being not visible
-  # geom_pointrange(aes(ymin = lo, ymax = up), shape = 21)
+
 
 png(here::here("figs", "depth_ml", "importance_quantreg.png"),
     height = 4, width = 6, units = "in", res = 250)
@@ -182,12 +195,14 @@ dev.off()
 # generate predictions for maturity stage and different counterfacs (e.g. 
 # most important 3 variables)
 new_dat <- train_depth_baked %>%
-  group_by(stage_mature) %>% 
-  dplyr::summarize(
+  # group_by(stage_mature) %>% 
+  # dplyr::summarize(
+  #   fl = mean(fl),
+  #   mean_log_e = mean(mean_log_e)
+  # ) %>% 
+  summarize(
     fl = mean(fl),
-    mean_log_e = mean(mean_log_e)
-  ) %>% 
-  mutate(
+    mean_log_e = mean(mean_log_e),
     mean_bathy = mean(train_depth_baked$mean_bathy),
     utm_x = mean(train_depth_baked$utm_x),
     det_day = mean(train_depth_baked$det_day),
@@ -202,8 +217,13 @@ new_dat <- train_depth_baked %>%
     thermo_depth = mean(train_depth_baked$thermo_depth),
     roms_temp = mean(train_depth_baked$roms_temp),
     moon_illuminated = mean(train_depth_baked$moon_illuminated),
-    day_night_night = 0.5
-  )
+    day_night_night = 0.5,
+    stage_mature = 0.5
+  ) %>% 
+  #duplicate 100 times
+  as_tibble() %>% 
+  slice(rep(1:n(), each = 100))
+
 
 # make tibble for different counterfacs
 pred_foo <- function(var_in) {
@@ -211,16 +231,16 @@ pred_foo <- function(var_in) {
   varname <- ensym(var_in)
   
   # generate stage-specific means for subset of variables
-  if (var_in %in% c("det_day", "fl", "mean_log_e")) {
-    group_vals <- train_depth_baked %>% 
-      dplyr::group_by(stage_mature) %>% 
-      dplyr::summarize(min_v = min(!!varname),
-                       max_v = max(!!varname)) 
-  } else {
+  # if (var_in %in% c("det_day", "fl", "mean_log_e")) {
+  #   group_vals <- train_depth_baked %>% 
+  #     dplyr::group_by(stage_mature) %>% 
+  #     dplyr::summarize(min_v = min(!!varname),
+  #                      max_v = max(!!varname)) 
+  # } else {
     group_vals <- train_depth_baked %>% 
       dplyr::summarize(min_v = min(!!varname),
                        max_v = max(!!varname))
-  }
+  # }
   
   # change to dataframe
   var_seq <- NULL
@@ -229,33 +249,38 @@ pred_foo <- function(var_in) {
                  seq(group_vals$min_v[i], group_vals$max_v[i], 
                      length.out = 100))
   }
-  if (var_in %in% c("det_day", "fl", "mean_log_e")) {
-    preds_in1 <- data.frame(
-      stage_mature = c(rep(0, 100),
-                       rep(1, 100)),
-      dum = var_seq
-    )
-  } else {
-    preds_in1 <- data.frame(
-      stage_mature = c(rep(0, 100),
-                       rep(1, 100)),
-      dum = rep(var_seq, 2)
-    )
-  }
+  # if (var_in %in% c("det_day", "fl", "mean_log_e")) {
+  #   preds_in1 <- data.frame(
+  #     stage_mature = c(rep(0, 100),
+  #                      rep(1, 100)),
+  #     dum = var_seq
+  #   )
+  # } else {
+    # preds_in1 <- data.frame(
+    #   # stage_mature = c(rep(0, 100),
+    #   #                  rep(1, 100)),
+    #   # dum = rep(var_seq, 2)
+    #   dum = var_seq
+    # )
+  # }
   
-  preds_in <- preds_in1 %>% 
-    dplyr::rename(!!varname := dum) %>%
-    left_join(.,
-              # add other variables
-              new_dat %>% select(- {{ var_in }}) %>% glimpse(),
-              by = "stage_mature") 
-   
+  # preds_in <- preds_in1 %>% 
+  #   dplyr::rename(!!varname := dum) %>%
+  #   left_join(.,
+  #             # add other variables
+  #             new_dat %>% select(- {{ var_in }}) %>% glimpse(),
+  #             by = "stage_mature") 
+  preds_in <- new_dat %>% 
+    select(- {{ var_in }}) %>% 
+    mutate(dum = var_seq) %>% 
+    dplyr::rename(!!varname := dum) 
+  
   # make predictions
   preds_out <- predict(rf_refit, quantiles = c(0.1, 0.5, 0.9),
                        newdata = preds_in, all = TRUE)
   colnames(preds_out) <- c("lo", "mean", "up")
-  cbind(preds_in, preds_out) %>%
-    mutate(stage_f = as.factor(stage_mature))
+  cbind(preds_in, preds_out)# %>%
+    # mutate(stage_f = as.factor(stage_mature))
 }
 
 counterfac_tbl <- tibble(
@@ -272,8 +297,10 @@ plot_list <- purrr::map2(
   function (var, preds) {
     preds %>%
       ggplot(., aes_string(x = var)) +
-      geom_line(aes(y = mean, color = stage_f), size = 1.5) +
-      geom_ribbon(aes(ymin = lo, ymax = up, fill = stage_f), alpha = 0.4) +
+      geom_line(aes(y = mean#, color = stage_f
+                    ), size = 1.5) +
+      geom_ribbon(aes(ymin = lo, ymax = up#, fill = stage_f
+                      ), alpha = 0.4) +
       ggsidekick::theme_sleek()
   }
 )

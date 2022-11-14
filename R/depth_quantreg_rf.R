@@ -67,7 +67,7 @@ depth_dat <- depth_dat_raw %>%
   dplyr::select(
     depth = pos_depth, fl, mean_log_e, stage, utm_x, utm_y, day_night,
     # det_day = local_day,
-    det_dayx = x_time, det_daty = y_time,
+    det_dayx = x_time, det_dayy = y_time,
     mean_bathy, mean_slope, shore_dist,
     u, v, w, roms_temp, zoo, oxygen, thermo_depth, moon_illuminated,
     ind_block
@@ -153,25 +153,26 @@ imp_dat <- as.data.frame(rf_refit$importance, row.names = FALSE) %>%
   mutate(
     var = rownames(rf_refit$importance) %>% 
       fct_reorder(., -percent_inc_mse),
-    mse_sd =  rf_refit$importanceSD,
-    up = percent_inc_mse + mse_sd,
-    lo = percent_inc_mse - mse_sd,
+    # mse_sd =  rf_refit$importanceSD,
+    # up = percent_inc_mse + mse_sd,
+    # lo = percent_inc_mse - mse_sd,
     category = case_when(
-      var %in% c("mean_bathy", "shore_dist", "utm_x", "utm_y", 
+      var %in% c("mean_bathy", "shore_dist", "utm_x", "utm_y",
                  "mean_slope") ~ "spatial",
-      var %in% c("det_day", "day_night_night", "moon_illuminated") ~ "temporal",
+      var %in% c("det_day", "det_dayx", "det_dayy",
+                 "day_night_night", "moon_illuminated") ~ "temporal",
       var %in% c("stage_mature", "fl", "mean_log_e") ~ "biological",
       TRUE ~ "dynamic"
     )
   ) %>% 
   arrange(-percent_inc_mse) 
 imp_dat$var_f = factor(
-  imp_dat$var, 
-  labels = c("Bottom Depth", "Fork Length", "Maturity", "Year Day", "UTM Y",
-             "Condition", "UTM X", "Bottom Slope", "Moon Phase", "Zooplankton", 
-             "Shore Distance", "Temperature", "Oxygen",
-             "Thermocline Depth", "Day/Night", "H Current 1", "H Current 2", 
-             "Vertical Current")
+  imp_dat$var#, 
+  # labels = c("Bottom Depth", "Fork Length", "Maturity", "Year Day", "UTM Y",
+  #            "Condition", "UTM X", "Bottom Slope", "Moon Phase", "Zooplankton", 
+  #            "Shore Distance", "Temperature", "Oxygen",
+  #            "Thermocline Depth", "Day/Night", "H Current 1", "H Current 2", 
+  #            "Vertical Current")
 )
 
 imp_plot <- ggplot(imp_dat, aes(x = var_f, y = percent_inc_mse)) +
@@ -192,6 +193,45 @@ dev.off()
 
 # COUNTERFACTUAL PREDICT -------------------------------------------------------
 
+# check effects of det day (requires back transformation)
+new_dat <- data.frame(
+    local_day = seq(1, 365, by = 1)
+) %>% 
+  mutate(
+    det_dayx = sin(2 * pi * local_day / 365),
+    det_daty = cos(2 * pi * local_day / 365),
+    fl = mean(train_depth_baked$fl),
+    mean_log_e = mean(train_depth_baked$mean_log_e),
+    mean_bathy = mean(train_depth_baked$mean_bathy),
+    utm_x = mean(train_depth_baked$utm_x),
+    utm_y = mean(train_depth_baked$utm_y),
+    mean_slope = mean(train_depth_baked$mean_slope),
+    shore_dist = mean(train_depth_baked$shore_dist),
+    u = mean(train_depth_baked$u),
+    v = mean(train_depth_baked$v),
+    w = mean(train_depth_baked$w),
+    zoo = mean(train_depth_baked$zoo),
+    oxygen = mean(train_depth_baked$oxygen),
+    thermo_depth = mean(train_depth_baked$thermo_depth),
+    roms_temp = mean(train_depth_baked$roms_temp),
+    moon_illuminated = mean(train_depth_baked$moon_illuminated),
+    day_night_night = 0.5,
+    stage_mature = 0.5
+  ) 
+
+preds_out <- predict(rf_refit, quantiles = c(0.1, 0.5, 0.9),
+                     newdata = new_dat, all = TRUE)
+colnames(preds_out) <- c("lo", "mean", "up")
+p <- cbind(new_dat, preds_out)
+
+ggplot(p, aes_string(x = "local_day")) +
+  geom_line(aes(y = mean#, color = stage_f
+  ), size = 1.5) +
+  geom_ribbon(aes(ymin = lo, ymax = up#, fill = stage_f
+  ), alpha = 0.4) +
+  ggsidekick::theme_sleek()
+
+
 # generate predictions for maturity stage and different counterfacs (e.g. 
 # most important 3 variables)
 new_dat <- train_depth_baked %>%
@@ -205,7 +245,7 @@ new_dat <- train_depth_baked %>%
     mean_log_e = mean(mean_log_e),
     mean_bathy = mean(train_depth_baked$mean_bathy),
     utm_x = mean(train_depth_baked$utm_x),
-    det_day = mean(train_depth_baked$det_day),
+    local_day = mean(depth_dat_raw$local_day),
     utm_y = mean(train_depth_baked$utm_y),
     mean_slope = mean(train_depth_baked$mean_slope),
     shore_dist = mean(train_depth_baked$shore_dist),
@@ -225,7 +265,8 @@ new_dat <- train_depth_baked %>%
   slice(rep(1:n(), each = 100))
 
 
-# make tibble for different counterfacs
+# make tibble for different counterfacs (commented out sections make 
+# stage-specific)
 pred_foo <- function(var_in) {
   # necessary to deal with string input
   varname <- ensym(var_in)
@@ -237,7 +278,7 @@ pred_foo <- function(var_in) {
   #     dplyr::summarize(min_v = min(!!varname),
   #                      max_v = max(!!varname)) 
   # } else {
-    group_vals <- train_depth_baked %>% 
+    group_vals <- depth_dat_raw %>% 
       dplyr::summarize(min_v = min(!!varname),
                        max_v = max(!!varname))
   # }
@@ -273,7 +314,11 @@ pred_foo <- function(var_in) {
   preds_in <- new_dat %>% 
     select(- {{ var_in }}) %>% 
     mutate(dum = var_seq) %>% 
-    dplyr::rename(!!varname := dum) 
+    dplyr::rename(!!varname := dum) %>% 
+    mutate(
+      det_dayx = sin(2 * pi * local_day / 365),
+      det_daty = cos(2 * pi * local_day / 365)
+    )
   
   # make predictions
   preds_out <- predict(rf_refit, quantiles = c(0.1, 0.5, 0.9),
@@ -284,7 +329,7 @@ pred_foo <- function(var_in) {
 }
 
 counterfac_tbl <- tibble(
-  var_in = c("mean_bathy", "fl", "det_day", "mean_log_e", "thermo_depth", 
+  var_in = c("mean_bathy", "fl", "local_day", "mean_log_e", "thermo_depth", 
              "roms_temp", "zoo", "oxygen", "shore_dist", 
              "moon_illuminated")) %>% 
   mutate(

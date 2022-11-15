@@ -20,7 +20,7 @@ stage_dat <- readRDS(here::here("data", "lifestage_df.RDS")) %>%
             by = "vemco_code") %>% 
   select(vemco_code, fl, stage_predicted, mean_log_e, cu_name, agg)  
 
-# ~2% of tags lack energy density estimates, interpolate
+# ~2% of tags lack energy density estimates, impute
 interp_stage_dat <- VIM::kNN(stage_dat, k = 5) %>% 
   select(-ends_with("imp")) 
 
@@ -76,6 +76,7 @@ depth_dets1 <- rbind(depth_raw, depth_h) %>%
     year = lubridate::year(date_time),
     agg = case_when(
       grepl("East Vancouver Island", cu_name) ~ "ECVI",
+      grepl("Okanagan", cu_name) ~ "Col",
       grepl("_1.", cu_name) ~ "FraserYear",
       grepl("_0.", cu_name) ~ "FraserSub",
       cu_name == "Lower Columbia River" ~ "LowCol",
@@ -357,7 +358,6 @@ depth_dat <- depth_dets1 %>%
     ., roms_interp_trim, 
     by = c("latitude", "longitude", "day", "month", "year", "hour")
   ) %>% 
-  # glimpse()
   mutate(
     start_time = min(date_time),
     timestamp = difftime(start_time, date_time, units = "mins"),
@@ -411,13 +411,17 @@ depth_dat2 <- cbind(depth_dat, temp %>% dplyr::select(sunrise, sunset)) %>%
   mutate(
     day_night = ifelse(date_time_local > sunrise & date_time_local < sunset,
                        "day", "night"),
-    moon_illuminated = moon_data
+    moon_illuminated = moon_data,
+    stage = as.factor(stage),
+    #create cyclical time steps representing year day
+    det_dayx = sin(2 * pi * local_day / 365),
+    det_dayy = cos(2 * pi * local_day / 365)
   ) %>%
   dplyr::select(
     vemco_code, cu_name, agg, fl, mean_log_e, stage, trim_sn, 
     receiver_name, latitude, longitude, utm_y, utm_x, mean_bathy, mean_slope, 
     shore_dist, u, v, w, roms_temp, zoo, oxygen, thermo_depth,
-    region_f, date_time_local, timestamp_n, local_day, year, 
+    region_f, date_time_local, timestamp_n, local_day, det_dayx, det_dayy, year, 
     local_hour, day_night, moon_illuminated, pos_depth = depth) 
 
 

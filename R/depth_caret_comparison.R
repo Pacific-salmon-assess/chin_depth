@@ -5,7 +5,7 @@
 ## 1) Model type (GBM vs. RF)
 ## 2) Hyperparameters
 ## 3) Response variable (logit transformed, relative depth, absolute depth)
-## 4) Model structure (separate models for stages or common model)
+
 
 library(plyr)
 library(tidyverse)
@@ -27,12 +27,9 @@ if (Sys.info()['sysname'] == "Windows") {
   doMC::registerDoMC(ncores)
 }
 
-
-# use 15 minute bins for fitting due to large number of observations
 depth_dat_raw <- readRDS(
-  here::here("data", "depth_dat_15min.RDS")) %>% 
-  mutate(logit_rel_depth = qlogis(rel_depth),
-         stage = as.factor(stage))
+  here::here("data", "depth_dat_nobin.RDS")) 
+
 
 # add individual block
 set.seed(1234)
@@ -46,10 +43,14 @@ ind_folds <- data.frame(
 
 depth_dat <- depth_dat_raw %>% 
   left_join(., ind_folds, by = "vemco_code") %>% 
+  filter(!is.na(roms_temp)) %>% 
   dplyr::select(
-    depth = pos_depth, rel_depth, logit_rel_depth, utm_y, utm_x, 
-    hour, det_day, mean_bathy, mean_slope, shore_dist,
-    u, v, w, roms_temp, fl, mean_log_e, stage, ind_block
+    depth = pos_depth, fl, mean_log_e, stage, utm_x, utm_y, day_night,
+    # det_day = local_day,
+    det_dayx, det_dayy,
+    mean_bathy, mean_slope, shore_dist,
+    u, v, w, roms_temp, zoo, oxygen, thermo_depth, moon_illuminated,
+    ind_block
   ) 
 
 # split by individual blocking
@@ -72,8 +73,9 @@ stage_foo <- function(dat, stage_in) {
 # with binned data
 model_tbl <- expand.grid(
   model_type = c("gbm", "rf"),
-  response = c("logit_rel_depth", "rel_depth", "depth"),
-  stage_dat = c("integrated")#, "mature", "immature")
+  response = c(#"logit_rel_depth", "rel_depth", 
+    "depth"),
+  stage_dat = c("integrated")
   ) %>% 
   as_tibble() 
 
@@ -82,17 +84,10 @@ add_data <- function(response, stage_dat) {
   # select dataset
   if (stage_dat == "integrated") {
     train_dum <- train_depth %>% 
-      dplyr::select(depth_var = response, utm_y:stage, ind_block)
+      dplyr::select(depth_var = all_of(response), utm_y:stage, ind_block)
     test_dum <- test_depth %>% 
-      dplyr::select(depth_var = response, utm_y:stage, ind_block)
+      dplyr::select(depth_var = all_of(response), utm_y:stage, ind_block)
   } 
-  if (stage_dat %in% c("mature", "immature")) {
-    train_dum <- stage_foo(train_depth, stage = stage_dat) %>% 
-      dplyr::select(depth_var = response, utm_y:roms_temp, ind_block)
-    test_dum <- stage_foo(test_depth, stage = stage_dat) %>% 
-      dplyr::select(depth_var = response, utm_y:roms_temp, ind_block)
-  }
-  
   # subset based on response
   list(train = train_dum, test = test_dum)
 }
@@ -114,8 +109,6 @@ model_tbl$recipe <- purrr::map(
       dplyr::select(-ind_block)
     
     recipe(depth_var ~ ., data = dum) %>% 
-      step_impute_knn(all_predictors(), neighbors = 3) %>%
-      # step_nzv(all_predictors()) %>% 
       step_dummy(all_predictors(), -all_numeric())
 })
 
@@ -190,24 +183,25 @@ plan(multisession, workers = 8)
 
 ## fit models (separately)
 gbm_tbl <- model_tbl %>% filter(model_type == "gbm")
-# gbm_list <- future_pmap(list("gbm",
-#                              gbm_tbl$recipe,
-#                              gbm_tbl$train_data),
-#                         .f = fit_foo, seed = TRUE)
-# names(gbm_list) <- gbm_tbl$response
-# saveRDS(gbm_list, here::here("data", "model_fits", "gbm_model_comparison.rds"))
-gbm_list <- readRDS(here::here("data", "model_fits", "gbm_model_comparison.rds"))
+gbm_list <- future_pmap(list("gbm",
+                             gbm_tbl$recipe,
+                             gbm_tbl$train_data),
+                        .f = fit_foo,
+                        .options = furrr_options(seed = TRUE))
+names(gbm_list) <- gbm_tbl$response
+saveRDS(gbm_list, here::here("data", "model_fits", "gbm_model_comparison_raw_only.rds"))
+# gbm_list <- readRDS(here::here("data", "model_fits", "gbm_model_comparison.rds"))
 
 
 rf_tbl <- model_tbl %>% filter(model_type == "rf")
-# rf_list <- future_pmap(list("rf",
-#                             rf_tbl$recipe,
-#                             rf_tbl$train_data),
-#                        .f = fit_foo, 
-#                        .options = furrr_options(seed = TRUE))
-# names(rf_list) <- rf_tbl$response
-# saveRDS(rf_list, here::here("data", "model_fits", "rf_model_comparison.rds"))
-rf_list <- readRDS(here::here("data", "model_fits", "rf_model_comparison.rds"))
+rf_list <- future_pmap(list("rf",
+                            rf_tbl$recipe,
+                            rf_tbl$train_data),
+                       .f = fit_foo,
+                       .options = furrr_options(seed = TRUE))
+names(rf_list) <- rf_tbl$response
+saveRDS(rf_list, here::here("data", "model_fits", "rf_model_comparison_raw_only.rds"))
+# rf_list <- readRDS(here::here("data", "model_fits", "rf_model_comparison.rds"))
 
 
 # performance tables and figures

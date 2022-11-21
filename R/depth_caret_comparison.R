@@ -129,7 +129,7 @@ gbm_grid <-  expand.grid(interaction.depth = c(2, 5, 10),
                          n.minobsinnode = c(5, 10, 20))
 
 rf_grid <- expand.grid(tune_length = 10,
-                       n.trees = seq(400, 1400, by = 200))
+                       n.trees = seq(500, 2500, by = 500))
 
 
 fit_foo <- function(model, recipe, train_data) {
@@ -189,7 +189,8 @@ gbm_list <- future_pmap(list("gbm",
                         .f = fit_foo,
                         .options = furrr_options(seed = TRUE))
 names(gbm_list) <- gbm_tbl$response
-saveRDS(gbm_list, here::here("data", "model_fits", "gbm_model_comparison_raw_only.rds"))
+saveRDS(gbm_list, 
+        here::here("data", "model_fits", "gbm_model_comparison_raw_only.rds"))
 # gbm_list <- readRDS(here::here("data", "model_fits", "gbm_model_comparison.rds"))
 
 
@@ -200,7 +201,8 @@ rf_list <- future_pmap(list("rf",
                        .f = fit_foo,
                        .options = furrr_options(seed = TRUE))
 names(rf_list) <- rf_tbl$response
-saveRDS(rf_list, here::here("data", "model_fits", "rf_model_comparison_raw_only.rds"))
+saveRDS(rf_list, 
+        here::here("data", "model_fits", "rf_model_comparison_raw_only.rds"))
 # rf_list <- readRDS(here::here("data", "model_fits", "rf_model_comparison.rds"))
 
 
@@ -233,15 +235,17 @@ model_tbl <- rbind(rf_tbl, gbm_tbl)
 
 
 # interpolated dataset for GBM predictions
-imp_train <- prep(model_tbl$recipe[[5]]) %>%
+imp_train <- prep(model_tbl$recipe[[2]]) %>%
   bake(.,
-       new_data = model_tbl$train_data[[5]] %>%
+       new_data = model_tbl$train_data[[2]] %>%
          dplyr::select(-ind_block)) 
 
 
 
 # calculate RMSE relative to observations in real space for top models
-real_train <- rf_tbl$train_data[[3]]
+real_train <- rf_tbl %>% 
+  filter(response == "depth") %>% 
+  pull(train_data)
 rmse_foo <- function(mod_in,
                      space = c("logit_rel_depth", "rel_depth", "depth"), 
                      model_type) {
@@ -258,9 +262,9 @@ rmse_foo <- function(mod_in,
     preds <- plogis(preds)
   }
   if (space %in% c("logit_rel_depth", "rel_depth")) {
-    preds <- preds * real_train$mean_bathy
+    preds <- preds * real_train[[1]]$mean_bathy
   }
-  Metrics::rmse(real_train$depth_var, preds)
+  Metrics::rmse(real_train[[1]]$depth_var, preds)
 }
 
 model_tbl$transformed_rmse <- pmap(list(model_tbl$top_model, 

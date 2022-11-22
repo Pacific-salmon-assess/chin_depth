@@ -408,6 +408,8 @@ temp <- suncalc::getSunlightTimes(data = sun_data,
 
 depth_dat2 <- cbind(depth_dat, temp %>% dplyr::select(sunrise, sunset)) %>%
   mutate(
+    rel_depth = depth / max_bathy,
+    logit_rel_depth = boot::logit(rel_depth), 
     day_night = ifelse(date_time_local > sunrise & date_time_local < sunset,
                        "day", "night"),
     moon_illuminated = moon_data,
@@ -422,16 +424,14 @@ depth_dat2 <- cbind(depth_dat, temp %>% dplyr::select(sunrise, sunset)) %>%
     shore_dist, u, v, w, roms_temp, zoo, oxygen, thermo_depth,
     region_f, date_time_utm = date_time, date_time_local, timestamp_n, 
     local_day, det_dayx, det_dayy, year, 
-    local_hour, day_night, moon_illuminated, pos_depth = depth) 
-
-
+    local_hour, day_night, moon_illuminated, pos_depth = depth,
+    rel_depth, logit_rel_depth) 
 
 # depth_dat %>%
 #     select_if(function(x) any(is.na(x))) %>%
 #     summarise_each(funs(sum(is.na(.))))
 
 saveRDS(depth_dat2, here::here("data", "depth_dat_nobin.RDS"))
-
 
 
 ## CHECK DETS ------------------------------------------------------------------
@@ -546,11 +546,12 @@ dev.off()
 
 
 # utm grid for bathymetry maps
-coast_utm <- coast_plotting %>% 
+coast_utm <- rbind(rnaturalearth::ne_states( "United States of America", 
+                                             returnclass = "sf"), 
+                   rnaturalearth::ne_states( "Canada", returnclass = "sf")) %>% 
   sf::st_crop(., 
               xmin = -127.5, ymin = 46, xmax = -122, ymax = 49.5) %>% 
   sf::st_transform(., crs = sp::CRS("+proj=utm +zone=10 +units=m"))
-
 
 bath_grid <- readRDS(here::here("data", "pred_bathy_grid_utm.RDS")) %>% 
   mutate(id = row_number(),
@@ -558,23 +559,27 @@ bath_grid <- readRDS(here::here("data", "pred_bathy_grid_utm.RDS")) %>%
   filter(depth < 400)
 
 blank_p <- ggplot() + 
-  geom_sf(data = coast_utm) +
   ggsidekick::theme_sleek() +
   theme(axis.title = element_blank(),
-        legend.position = "top") 
+        legend.position = "top") +
+  scale_x_continuous(expand = c(0, 0)) +
+  scale_y_continuous(expand = c(0, 0))
 
 depth_plot <- blank_p +
   geom_raster(data = bath_grid, 
               aes(x = X, y = Y, fill = depth)) +
-  scale_fill_viridis_c(name = "Depth (m)") 
+  geom_sf(data = coast_utm) +
+  scale_fill_viridis_c(name = "Depth (m)", direction = -1) 
 slope_plot <- blank_p +
   geom_raster(data = bath_grid, 
               aes(x = X, y = Y, fill = slope)) +
-  scale_fill_viridis_c(name = "Slope\n(degrees)") 
+  geom_sf(data = coast_utm) +
+  scale_fill_viridis_c(name = "Slope\n(degrees)", direction = -1) 
 dist_plot <- blank_p +
   geom_raster(data = bath_grid, 
               aes(x = X, y = Y, fill = shore_dist_km)) +
-  scale_fill_viridis_c(name = "Distance\nto Coast (km)") 
+  geom_sf(data = coast_utm) +
+  scale_fill_viridis_c(name = "Distance\nto Coast (km)", direction = -1) 
 
 bathy_vars <- cowplot::plot_grid(
   plotlist = list(depth_plot, slope_plot, dist_plot),

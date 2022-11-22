@@ -43,9 +43,10 @@ ind_folds <- data.frame(
 
 depth_dat <- depth_dat_raw %>% 
   left_join(., ind_folds, by = "vemco_code") %>% 
-  filter(!is.na(roms_temp)) %>% 
+  filter(!is.na(roms_temp)) %>%
   dplyr::select(
-    depth = pos_depth, fl, mean_log_e, stage, utm_x, utm_y, day_night,
+    depth = pos_depth, rel_depth, logit_rel_depth,
+    fl, mean_log_e, stage, utm_x, utm_y, day_night,
     # det_day = local_day,
     det_dayx, det_dayy,
     mean_bathy, mean_slope, shore_dist,
@@ -69,12 +70,9 @@ stage_foo <- function(dat, stage_in) {
 
 
 ## create dataframe of models to compete
-## NOTE exclude stage-specific models for now because issues with convergence 
-# with binned data
 model_tbl <- expand.grid(
   model_type = c("gbm", "rf"),
-  response = c(#"logit_rel_depth", "rel_depth", 
-    "depth"),
+  response = c("logit_rel_depth", "rel_depth", "depth"),
   stage_dat = c("integrated")
   ) %>% 
   as_tibble() 
@@ -84,9 +82,9 @@ add_data <- function(response, stage_dat) {
   # select dataset
   if (stage_dat == "integrated") {
     train_dum <- train_depth %>% 
-      dplyr::select(depth_var = all_of(response), utm_y:stage, ind_block)
+      dplyr::select(depth_var = all_of(response), fl:ind_block)
     test_dum <- test_depth %>% 
-      dplyr::select(depth_var = all_of(response), utm_y:stage, ind_block)
+      dplyr::select(depth_var = all_of(response), fl:ind_block)
   } 
   # subset based on response
   list(train = train_dum, test = test_dum)

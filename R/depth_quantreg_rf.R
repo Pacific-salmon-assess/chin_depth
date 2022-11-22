@@ -230,7 +230,7 @@ new_dat <- train_depth_baked %>%
 gen_pred_dat <- function(var_in) {
   # necessary to deal with string input
   varname <- ensym(var_in)
-    group_vals <- depth_dat_raw %>% 
+  group_vals <- depth_dat_raw %>% 
       dplyr::summarize(min_v = min(!!varname),
                        max_v = max(!!varname))
   # change to dataframe
@@ -249,6 +249,21 @@ gen_pred_dat <- function(var_in) {
       det_dayy = cos(2 * pi * local_day / 365)
     )
 }
+
+for (i in seq_along(var_in2)) {
+  varname <- ensym(var_in2[[i]])
+  group_vals <- depth_dat_raw %>% 
+    dplyr::summarize(min_v = min(!!varname),
+                     max_v = max(!!varname))
+  # change to dataframe
+  var_seq <- NULL
+  for (i in 1:nrow(group_vals)) {
+    var_seq <- c(var_seq, 
+                 seq(group_vals$min_v[i], group_vals$max_v[i], 
+                     length.out = 100))
+  }
+}
+
 
 pred_foo <- function(preds_in) {
   preds_out <- predict(rf_refit, quantiles = c(0.1, 0.5, 0.9),

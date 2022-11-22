@@ -125,13 +125,23 @@ ggplot(dum) +
 
 # explore strange bifurcation
 dum2 <- dum %>% 
-  filter(abs(resid) > 25) %>% 
-  glimpse()
+  filter(abs(resid) > 50) %>% 
+  mutate(
+    utm_x_m = utm_x * 1000,
+    utm_y_m = utm_y * 1000
+  )
 
 ggplot(dum2) +
   geom_pointrange(aes(x = depth, y = mean, ymin = lo, ymax = up,
                       fill = as.factor(stage_mature)), shape = 21,
                   alpha = 0.3)
+
+ggplot() + 
+  ggsidekick::theme_sleek() +
+  theme(axis.title = element_blank()) +
+  geom_point(data = dum2, aes(x = utm_x_m, y = utm_y_m, fill = det_dayy), 
+             shape = 21) +
+  geom_sf(data = coast_utm) 
 
 
 # VARIABLE IMPORTANCE ----------------------------------------------------------
@@ -179,7 +189,7 @@ imp_plot <- ggplot(imp_dat, aes(x = var_f, y = percent_inc_mse)) +
   )
 
 
-png(here::here("figs", "depth_ml", "importance_quantreg.png"),
+png(here::here("figs", "ms_figs", "importance_quantreg.png"),
     height = 4, width = 6, units = "in", res = 250)
 imp_plot
 dev.off()
@@ -427,19 +437,22 @@ pred_dat2 <- pred_dat1 %>%
   filter(mean_bathy < 400)
 
 base_plot <- ggplot() + 
-  # geom_sf(data = coast_utm) +
   ggsidekick::theme_sleek() +
-  theme(axis.title = element_blank()) 
-
+  theme(axis.title = element_blank()) +
+  scale_x_continuous(expand = c(0, 0)) +
+  scale_y_continuous(expand = c(0, 0))
+  
 mean_depth <- base_plot +
   geom_raster(data = pred_dat2, 
               aes(x = utm_x_m, y = utm_y_m, fill = pred_med)) +
+  geom_sf(data = coast_utm) +
   scale_fill_viridis_c(name = "Mean Depth") +
   theme(legend.position = "top")
 
 var_depth <- base_plot +
   geom_raster(data = pred_dat2, 
               aes(x = utm_x_m, y = utm_y_m, fill = pred_int_width)) +
+  geom_sf(data = coast_utm) +
   scale_fill_viridis_c(name = "Variation Depth", option = "C")  +
   theme(legend.position = "top")
 
@@ -542,9 +555,10 @@ season_map <- base_plot +
   geom_raster(data = season_eff, 
               aes(x = utm_x_m, y = utm_y_m, fill = season_diff)) +
   geom_sf(data = coast_utm) +
-  scale_fill_gradient2(
-    name = "Mean Depth Difference"
-    ) +
+  scale_fill_gradientn(colours = c("red", "white", "blue"), 
+                       values = scales::rescale(c(-6, 0, 6)),
+                       guide = "colorbar", 
+                       limits = c(-6, 6)) +
   labs(title = "Season Effects")
 
 
@@ -561,9 +575,10 @@ mat_map <- base_plot +
   geom_raster(data = mat_eff, 
               aes(x = utm_x_m, y = utm_y_m, fill = mat_diff)) +
   geom_sf(data = coast_utm) +
-  scale_fill_gradient2(
-    name = "Mean Depth Difference"
-  ) +
+  scale_fill_gradientn(colours = c("red", "white", "blue"), 
+                       values = scales::rescale(c(-6, 0, 6)),
+                       guide = "colorbar", 
+                       limits = c(-6, 6)) +
   labs(title = "Maturity Effects")
 
 
@@ -575,14 +590,15 @@ moon_eff <- pred_dat %>%
   select(moon_illuminated, mean_bathy:shore_dist, utm_x_m, utm_y_m, pred_med,
          mean_depth) %>% 
   pivot_wider(names_from = moon_illuminated, values_from = pred_med) %>%
-  mutate(moon_diff = (`0` - `1`) / `1`) 
+  mutate(moon_diff = (`0` - `1`) / `1`)
 moonlight_map <- base_plot +
   geom_raster(data = moon_eff, 
               aes(x = utm_x_m, y = utm_y_m, fill = moon_diff)) +
   geom_sf(data = coast_utm) +
-  scale_fill_gradient2(
-    name = "Mean Depth Difference"
-  ) +
+  scale_fill_gradientn(colours = c("red", "white", "blue"), 
+                       values = scales::rescale(c(-6, 0, 6)),
+                       guide = "colorbar", 
+                       limits = c(-6, 6)) +
   labs(title = "Moonlight Effects")
 
 
@@ -600,11 +616,11 @@ dvm_map <- base_plot +
   geom_raster(data = dvm_eff, 
               aes(x = utm_x_m, y = utm_y_m, fill = dvm_diff)) +
   geom_sf(data = coast_utm) +
-  scale_fill_gradient2(
-    name = "Mean Depth Difference"
-  ) +
+  scale_fill_gradientn(colours = c("red", "white", "blue"), 
+                       values = scales::rescale(c(-6, 0, 6)),
+                       guide = "colorbar", 
+                       limits = c(-6, 6)) +
   labs(title = "DVM Effects")
-
 
 
 pdf(here::here("figs", "depth_ml", "spatial_contrasts.pdf"))
@@ -614,6 +630,33 @@ moonlight_map
 dvm_map
 dev.off()
 
+
+# combine season and maturity predictions and plot joined version
+# NOTE: constrains maximum difference to be 200% even though range extends to 
+# 600%
+season_eff2 <- season_eff %>% 
+  mutate(comp = "season") %>% 
+  select(mean_bathy:mean_depth, comp, rel_diff = season_diff)
+mat_eff2 <- mat_eff %>% 
+  mutate(comp = "maturity") %>% 
+  select(mean_bathy:mean_depth, comp, rel_diff = mat_diff)
+
+png(here::here("figs", "ms_figs", "contrast_map.png"), height = 5, width = 8, 
+    units = "in", res = 250)
+base_plot +
+  geom_raster(data = rbind(season_eff2, mat_eff2) %>% 
+                mutate(
+                  rel_diff = ifelse(rel_diff > 2, 2, rel_diff)
+                ), 
+              aes(x = utm_x_m, y = utm_y_m, fill = rel_diff)) +
+  geom_sf(data = coast_utm) +
+  scale_fill_gradient2(
+    name = "Relative Depth Difference"
+  ) +
+  facet_wrap(~comp) +
+  theme(legend.position = "top")
+dev.off()
+  
 
 # SPATIAL RESIDUALS ------------------------------------------------------------
 

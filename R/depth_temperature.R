@@ -16,25 +16,25 @@ temp_dat <- read.csv(
 depth_dat_raw <- readRDS(
   here::here("data", "depth_dat_nobin.RDS")) %>%
   mutate(stage = as.factor(stage),
-         month = lubridate::month(date_time),
-         day = lubridate::day(date_time),
-         hour = lubridate::hour(date_time) + 1) %>%
-  select(vemco_code:stage, year, month, day, hour, date_time:utm_x, region_f,
-         day_night) 
+         month = lubridate::month(date_time_utm),
+         day = lubridate::day(date_time_utm),
+         hour = lubridate::hour(date_time_utm) + 1) #%>%
+  # select(vemco_code:stage, latitude, longitude, year, month, day, 
+  #        hour, date_time_utm, utm_y, 
+  #        utm_x, region_f, day_night, pos_depth) 
 
 d_trim <- depth_dat_raw %>% 
-  select(vemco_code, year:hour, lat = latitude, lon = longitude, region_f,
-         pos_depth)
+  select(vemco_code, year:hour, latitude, longitude, region_f, pos_depth)
   
 
 depth_dat <- left_join(
   temp_dat, d_trim, 
-  by = c("year", "month", "day", "hour", "lat", "lon")
-) %>% 
+  by = c("year", "month", "day", "hour", "latitude", "longitude")
+) %>%
   mutate(
     depth_diff =  abs(depth - pos_depth)
   ) %>% 
-  group_by(year, month, day, hour, lat, lon, pos_depth) %>% 
+  group_by(year, month, day, hour, latitude, longitude, pos_depth) %>% 
   mutate(
     min_depth_diff = min(depth_diff)
   ) %>% 
@@ -55,7 +55,8 @@ depth_dat <- left_join(
       TRUE ~ as.character(region_f)
     )
   ) %>% 
-  select(year:lon, temperature = value, region_f, season, depth)
+  select(year, month, day, hour, latitude, longitude, 
+         temperature = temp, region_f, season, depth)
 
 depth_dat %>% 
   ggplot(.) +
@@ -84,7 +85,10 @@ depth_bin <- depth_dat %>%
       labels = temp_labs) %>% 
       as.factor(),
     season = fct_relevel(as.factor(season), 
-                         "spring", "summer", "fall", "winter")
+                         "spring", "summer", "fall", "winter"),
+    region_f = factor(region_f, 
+                         levels = c("wcvi", "wa", "jdf", "sog", "puget"),
+                      labels = c("WCVI", "WA", "JdF", "SoG", "PS"))
   ) %>% 
   group_by(depth_bin, temp_bin, region_f, season) %>% 
   tally()
@@ -92,13 +96,20 @@ depth_bin <- depth_dat %>%
 depth_bin_plot <- ggplot(depth_bin) +
   geom_raster(aes(x = temp_bin, y = depth_bin, fill = n)) +
   scale_fill_viridis_c(
-    trans = "sqrt"
+    trans = "sqrt",
+    name = "Number of\nDetections"
   ) +
   facet_grid(region_f~season) +
   ggsidekick::theme_sleek() +
+  scale_y_discrete(name = "Depth", 
+                   breaks = seq(-300, 0, by = 25)) +
+  scale_x_discrete(name = "Temperature", 
+                   breaks = seq(6, 24, by = 1)) +
   theme(axis.text.x = element_text(angle = 45))
 
-pdf(here::here("figs", "temp_at_depth.pdf"), width = 9, height = 6)
+png(here::here("figs", "ms_figs", "temp_at_depth.png"),
+    units = "in", res = 200, 
+    width = 9, height = 6)
 depth_bin_plot
 dev.off()
 

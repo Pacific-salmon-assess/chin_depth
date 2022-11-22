@@ -25,7 +25,6 @@ interp_stage_dat <- VIM::kNN(stage_dat, k = 5) %>%
   select(-ends_with("imp")) 
 
 
-
 # moderately cleaned detections data (includes depth/temperature sensors)
 depth_raw <- readRDS(here::here("data", "detections_all.RDS")) %>%
   filter(
@@ -421,7 +420,8 @@ depth_dat2 <- cbind(depth_dat, temp %>% dplyr::select(sunrise, sunset)) %>%
     vemco_code, cu_name, agg, fl, mean_log_e, stage, trim_sn, 
     receiver_name, latitude, longitude, utm_y, utm_x, mean_bathy, mean_slope, 
     shore_dist, u, v, w, roms_temp, zoo, oxygen, thermo_depth,
-    region_f, date_time_local, timestamp_n, local_day, det_dayx, det_dayy, year, 
+    region_f, date_time_utm = date_time, date_time_local, timestamp_n, 
+    local_day, det_dayx, det_dayy, year, 
     local_hour, day_night, moon_illuminated, pos_depth = depth) 
 
 

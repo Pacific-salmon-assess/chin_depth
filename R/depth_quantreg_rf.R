@@ -135,7 +135,6 @@ ggplot(dum2) +
   geom_pointrange(aes(x = depth, y = mean, ymin = lo, ymax = up,
                       fill = as.factor(stage_mature)), shape = 21,
                   alpha = 0.3)
-
 ggplot() + 
   ggsidekick::theme_sleek() +
   theme(axis.title = element_blank()) +
@@ -172,10 +171,11 @@ imp_dat <- as.data.frame(rf_refit$importance, row.names = FALSE) %>%
   arrange(-percent_inc_mse) 
 imp_dat$var_f = factor(
   imp_dat$var#, 
-  # labels = c("Bottom Depth", "Fork Length", "Maturity", "Year Day", "UTM Y",
-  #            "Condition", "UTM X", "Bottom Slope", "Moon Phase", "Zooplankton", 
+  # labels = c("Bottom Depth", "Year Day 1", "Fork Length", "Maturity", 
+  #            "UTM Y", "UTM X", "Condition", "Year Day 2", "Bottom Slope", 
+  #            "Moon Phase", "Bottom Slope", "Zooplankton",
   #            "Shore Distance", "Temperature", "Oxygen",
-  #            "Thermocline Depth", "Day/Night", "H Current 1", "H Current 2", 
+  #            "Thermocline Depth", "Day/Night", "H Current 1", "H Current 2",
   #            "Vertical Current")
 )
 
@@ -200,11 +200,6 @@ dev.off()
 # generate predictions for maturity stage and different counterfacs (e.g. 
 # most important 3 variables)
 new_dat <- train_depth_baked %>%
-  # group_by(stage_mature) %>% 
-  # dplyr::summarize(
-  #   fl = mean(fl),
-  #   mean_log_e = mean(mean_log_e)
-  # ) %>% 
   summarize(
     fl = mean(fl),
     mean_log_e = mean(mean_log_e),
@@ -235,19 +230,9 @@ new_dat <- train_depth_baked %>%
 gen_pred_dat <- function(var_in) {
   # necessary to deal with string input
   varname <- ensym(var_in)
-  
-  # generate stage-specific means for subset of variables
-  # if (var_in %in% c("det_day", "fl", "mean_log_e")) {
-  #   group_vals <- train_depth_baked %>% 
-  #     dplyr::group_by(stage_mature) %>% 
-  #     dplyr::summarize(min_v = min(!!varname),
-  #                      max_v = max(!!varname)) 
-  # } else {
     group_vals <- depth_dat_raw %>% 
       dplyr::summarize(min_v = min(!!varname),
                        max_v = max(!!varname))
-  # }
-  
   # change to dataframe
   var_seq <- NULL
   for (i in 1:nrow(group_vals)) {
@@ -255,28 +240,6 @@ gen_pred_dat <- function(var_in) {
                    seq(group_vals$min_v[i], group_vals$max_v[i], 
                        length.out = 100))
   }
-  
-  # if (var_in %in% c("det_day", "fl", "mean_log_e")) {
-  #   preds_in1 <- data.frame(
-  #     stage_mature = c(rep(0, 100),
-  #                      rep(1, 100)),
-  #     dum = var_seq
-  #   )
-  # } else {
-    # preds_in1 <- data.frame(
-    #   # stage_mature = c(rep(0, 100),
-    #   #                  rep(1, 100)),
-    #   # dum = rep(var_seq, 2)
-    #   dum = var_seq
-    # )
-  # }
-  
-  # preds_in <- preds_in1 %>% 
-  #   dplyr::rename(!!varname := dum) %>%
-  #   left_join(.,
-  #             # add other variables
-  #             new_dat %>% select(- {{ var_in }}) %>% glimpse(),
-  #             by = "stage_mature") 
   new_dat %>% 
     select(- {{ var_in }}) %>% 
     mutate(dum = var_seq) %>% 

@@ -49,7 +49,7 @@ depth_dat <- depth_dat_raw %>%
     fl, mean_log_e, stage, utm_x, utm_y, day_night,
     # det_day = local_day,
     det_dayx, det_dayy,
-    mean_bathy, mean_slope, shore_dist,
+    max_bathy, mean_bathy, mean_slope, shore_dist,
     u, v, w, roms_temp, zoo, oxygen, thermo_depth, moon_illuminated,
     ind_block
   ) 
@@ -104,7 +104,7 @@ model_tbl$recipe <- purrr::map(
   model_tbl$train_data,
   function (x) {
     dum <- x %>% 
-      dplyr::select(-ind_block)
+      dplyr::select(-ind_block, -max_bathy)
     
     recipe(depth_var ~ ., data = dum) %>% 
       step_dummy(all_predictors(), -all_numeric())
@@ -134,7 +134,7 @@ fit_foo <- function(model, recipe, train_data) {
   if (model == "gbm") {
     fit <- train(
       recipe,
-      train_data %>% dplyr::select(-ind_block),
+      train_data %>% dplyr::select(-ind_block, -max_bathy),
       method = "gbm", 
       metric = "RMSE",
       maximize = FALSE,
@@ -151,7 +151,7 @@ fit_foo <- function(model, recipe, train_data) {
     for (i in seq_along(fits)) {
       fits[[i]] <- train(
         recipe,
-        train_data %>% dplyr::select(-ind_block),
+        train_data %>% dplyr::select(-ind_block, -max_bathy),
         method = "ranger", 
         metric = "RMSE",
         maximize = FALSE,
@@ -181,28 +181,143 @@ plan(multisession, workers = 8)
 
 ## fit models (separately)
 gbm_tbl <- model_tbl %>% filter(model_type == "gbm")
-gbm_list <- future_pmap(list("gbm",
-                             gbm_tbl$recipe,
-                             gbm_tbl$train_data),
-                        .f = fit_foo,
-                        .options = furrr_options(seed = TRUE))
-names(gbm_list) <- gbm_tbl$response
-saveRDS(gbm_list, 
-        here::here("data", "model_fits", "gbm_model_comparison_raw_only.rds"))
-# gbm_list <- readRDS(here::here("data", "model_fits", "gbm_model_comparison.rds"))
+# gbm_list <- future_pmap(list("gbm",
+#                              gbm_tbl$recipe,
+#                              gbm_tbl$train_data),
+#                         .f = fit_foo,
+#                         .options = furrr_options(seed = TRUE))
+# names(gbm_list) <- gbm_tbl$response
+# saveRDS(gbm_list, 
+#         here::here("data", "model_fits", "gbm_model_comparison.rds"))
+gbm_list <- readRDS(here::here("data", "model_fits", "gbm_model_comparison.rds"))
 
 
 rf_tbl <- model_tbl %>% filter(model_type == "rf")
-rf_list <- future_pmap(list("rf",
-                            rf_tbl$recipe,
-                            rf_tbl$train_data),
-                       .f = fit_foo,
-                       .options = furrr_options(seed = TRUE))
-names(rf_list) <- rf_tbl$response
-saveRDS(rf_list, 
-        here::here("data", "model_fits", "rf_model_comparison_raw_only.rds"))
-# rf_list <- readRDS(here::here("data", "model_fits", "rf_model_comparison.rds"))
+# rf_list <- future_pmap(list("rf",
+#                             rf_tbl$recipe,
+#                             rf_tbl$train_data),
+#                        .f = fit_foo,
+#                        .options = furrr_options(seed = TRUE))
+# names(rf_list) <- rf_tbl$response
+# saveRDS(rf_list, 
+#         here::here("data", "model_fits", "rf_model_comparison.rds"))
+rf_list <- readRDS(here::here("data", "model_fits", "rf_model_comparison.rds"))
 
+
+## COMPARE MODEL STRUCTURES ----------------------------------------------------
+
+
+## top models for RF cannot be fit to new data so instead extract values from 
+# top ranger models then store new ranger objects in tibble
+rf_train_list <- model_tbl %>% 
+  filter(model_type == "rf") %>% 
+  pull(train_data)
+top_rangers <- purrr::map2(rf_list, rf_train_list, function (x, y) {
+  top_mod <- x$top_model
+  baked_dat <- prep(model_tbl$recipe[[1]]) %>%
+    bake(.,
+         new_data = y)
+  
+  ranger_rf <- ranger::ranger(
+    depth_var ~ .,
+    data = baked_dat,
+    num.trees = top_mod$param$num.trees,
+    mtry = top_mod$tuneValue$mtry
+  )
+})
+
+# add models to tbl
+rf_tbl$top_model <- top_rangers #map(rf_list, function (x) x$top_model)
+gbm_tbl$top_model <- map(gbm_list, function (x) x$top_model) 
+model_tbl <- rbind(rf_tbl, gbm_tbl)
+
+
+# calculate RMSE relative to observations in real space for top models
+# bathy vectors to adjust proportional data
+train_bathy <- train_depth$max_bathy
+test_bathy <- test_depth$max_bathy
+
+real_train <- rf_tbl %>% 
+  filter(response == "depth") %>% 
+  pull(train_data) %>% 
+  as.data.frame() %>% 
+  mutate(max_bathy = train_bathy)
+real_test <- rf_tbl %>% 
+  filter(response == "depth") %>% 
+  pull(test_data) %>% 
+  as.data.frame() %>% 
+  mutate(max_bathy = test_bathy)
+
+rmse_foo <- function(
+    mod_in,
+    space = c("logit_rel_depth", "rel_depth", "depth"), 
+    model_type,
+    dat_in
+    ) {
+  # apply recipe to convert factors to numeric
+  baked_dat <- prep(model_tbl$recipe[[1]]) %>%
+      bake(.,
+           new_data = dat_in %>%
+             dplyr::select(-depth_var, -ind_block, -max_bathy))
+  
+  if (model_type == "rf") {
+    preds <- predict(mod_in,
+                     data = baked_dat)$predictions
+  } else if (model_type == "gbm") {
+    preds <- predict(mod_in,
+                     newdata = baked_dat)
+  }
+  if (space == "logit_rel_depth") {
+    preds <- plogis(preds)
+  }
+  if (space %in% c("logit_rel_depth", "rel_depth")) {
+    preds <- preds * dat_in$max_bathy
+  }
+  
+  Metrics::rmse(dat_in$depth_var, preds)
+}
+
+transformed_rmse_train <- purrr::pmap(
+  list(
+    model_tbl$top_model, 
+    model_tbl$response, 
+    model_tbl$model_type
+  ),
+  rmse_foo,
+  dat_in = real_train) %>% 
+  unlist()
+transformed_rmse_test <- purrr::pmap(
+  list(
+    model_tbl$top_model, 
+    model_tbl$response, 
+    model_tbl$model_type
+  ),
+  rmse_foo,
+  dat_in = real_test) %>% 
+  unlist()
+
+
+pred_1 <- (top_rangers[[2]]$predictions * train_bathy)
+obs_1 <- (rf_train_list[[2]]$depth_var * train_bathy)
+plot(pred_1 ~ obs_1)
+
+
+# rmse_foo(model_tbl$top_model[[6]], 
+#          model_tbl$response[[6]], 
+#          model_tbl$model_type[[6]], 
+#          real_train)
+
+
+write.csv(model_tbl %>%
+            mutate(rmse_train = transformed_rmse_train,
+                   rmse_test = transformed_rmse_test) %>% 
+            select(model_type, response, rmse_train, rmse_test),
+          here::here("figs", "model_comp", "top_model_transformed_rmse.csv"),
+          row.names = FALSE)
+
+
+
+## HYPER PARAMETER DIAGNOSTICS -------------------------------------------------
 
 # performance tables and figures
 gbm_dat <- map2(names(gbm_list), gbm_list, function (name, x) {
@@ -226,57 +341,8 @@ rf_hyper_plot <- ggplot(rf_dat) +
   facet_grid(response~n_trees, scales = "free_y")
 
 
-# add models to tbl
-rf_tbl$top_model <- map(rf_list, function (x) x$top_model)
-gbm_tbl$top_model <- map(gbm_list, function (x) x$top_model) 
-model_tbl <- rbind(rf_tbl, gbm_tbl)
-
-
-# interpolated dataset for GBM predictions
-imp_train <- prep(model_tbl$recipe[[2]]) %>%
-  bake(.,
-       new_data = model_tbl$train_data[[2]] %>%
-         dplyr::select(-ind_block)) 
-
-
-
-# calculate RMSE relative to observations in real space for top models
-real_train <- rf_tbl %>% 
-  filter(response == "depth") %>% 
-  pull(train_data)
-rmse_foo <- function(mod_in,
-                     space = c("logit_rel_depth", "rel_depth", "depth"), 
-                     model_type) {
-  if (model_type == "rf") {
-    preds <- mod_in$predictions
-    # preds <- predict(mod_in,
-    #                  data = imp_train %>% select(-depth_var))$predictions
-  } else if (model_type == "gbm") {
-    # note that need to apply recipe to training data before using 
-    preds <- predict(mod_in,
-                     newdata = imp_train %>% select(-depth_var))
-  }
-  if (space == "logit_rel_depth") {
-    preds <- plogis(preds)
-  }
-  if (space %in% c("logit_rel_depth", "rel_depth")) {
-    preds <- preds * real_train[[1]]$mean_bathy
-  }
-  Metrics::rmse(real_train[[1]]$depth_var, preds)
-}
-
-model_tbl$transformed_rmse <- pmap(list(model_tbl$top_model, 
-                                        model_tbl$response, 
-                                        model_tbl$model_type), 
-                                   rmse_foo) %>% unlist()
-
 ## export 
 pdf(here::here("figs", "model_comp", "hyperpar_tuning.pdf"))
 gbm_hyper_plot
 rf_hyper_plot
 dev.off()
-
-write.csv(model_tbl %>% 
-            select(model_type, response, transformed_rmse),
-          here::here("figs", "model_comp", "top_model_transformed_rmse.csv"),
-          row.names = FALSE)

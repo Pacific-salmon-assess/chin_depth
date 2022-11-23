@@ -1,7 +1,7 @@
-"model_type","response","transformed_rmse"
-"rf","logit_rel_depth",16.4638467806991
-"rf","rel_depth",14.3921227516092
-"rf","depth",12.4818247465447
-"gbm","logit_rel_depth",24.1705244369398
-"gbm","rel_depth",22.3675574107757
-"gbm","depth",21.6257568309767
+"model_type","response","rmse_train","rmse_test"
+"rf","logit_rel_depth",10.9205687551518,29.2274383221609
+"rf","rel_depth",8.46519311918554,28.1005254505668
+"rf","depth",7.91492662873209,29.6482123718324
+"gbm","logit_rel_depth",25.7299886811365,30.0932997075089
+"gbm","rel_depth",24.5947618763531,31.0551642389393
+"gbm","depth",23.8756395558131,29.3791282322406

@@ -209,14 +209,20 @@ dev.off()
 
 # VARIABLE IMPORTANCE WITH PARTY PACKAGE ---------------------------------------
 
-rf_party <- party::cforest(
-  depth ~ .,
-  data = train_depth_baked,
-  control = party::cforest_unbiased(
-    mtry = top_mod$tuneValue$mtry, 
-    ntree = top_mod$param$num.trees
-    )
-)
+# rf_party <- party::cforest(
+#   depth ~ .,
+#   data = train_depth_baked,
+#   control = party::cforest_unbiased(
+#     mtry = top_mod$tuneValue$mtry, 
+#     ntree = top_mod$param$num.trees
+#     )
+# )
+
+rf_rf <- randomForest(train_depth_baked %>% select(-depth), 
+                      train_depth_baked$depth, 
+                      ntree = top_mod$param$num.trees) 
+
+imp1 <- permimp::permimp(rf_party, conditional = TRUE, progressBar = TRUE)
 
 imp <- rf_party %>%
   party::varimp(conditional = TRUE) %>% 

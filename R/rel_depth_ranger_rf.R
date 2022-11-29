@@ -111,6 +111,9 @@ ranger_rf <- ranger::ranger(
   importance = "permutation"
 )
 
+saveRDS(ranger_rf, 
+        here::here("data", "model_fits", "relative_rf_ranger.rds"))
+
 
 # CHECK PREDS ------------------------------------------------------------------
 
@@ -201,7 +204,7 @@ imp_plot <- ggplot(imp_dat, aes(x = var_f, y = val)) +
     axis.text.x = element_text(angle = 45, hjust = 1)
   )
 
-png(here::here("figs", "ms_figs", "importance_quantreg.png"),
+png(here::here("figs", "ms_figs_rel", "importance_quantreg.png"),
     height = 4, width = 6, units = "in", res = 250)
 imp_plot
 dev.off()
@@ -209,26 +212,23 @@ dev.off()
 
 # VARIABLE IMPORTANCE WITH PARTY PACKAGE ---------------------------------------
 
-# rf_party <- party::cforest(
-#   depth ~ .,
-#   data = train_depth_baked,
-#   control = party::cforest_unbiased(
-#     mtry = top_mod$tuneValue$mtry, 
-#     ntree = top_mod$param$num.trees
-#     )
-# )
-
-rf_rf <- randomForest(train_depth_baked %>% select(-depth), 
-                      train_depth_baked$depth, 
-                      ntree = top_mod$param$num.trees) 
+rf_party <- party::cforest(
+  depth ~ .,
+  data = train_depth_baked,
+  control = party::cforest_unbiased(
+    mtry = top_mod$tuneValue$mtry,
+    ntree = top_mod$param$num.trees
+    )
+)
 
 imp1 <- permimp::permimp(rf_party, conditional = TRUE, progressBar = TRUE)
 
-imp <- rf_party %>%
-  party::varimp(conditional = TRUE) %>% 
-  as_tibble() %>% 
-  rownames_to_column("Feature") %>% 
-  rename(Importance = value)
+
+# imp <- rf_party %>%
+#   party::varimp(conditional = TRUE) %>% 
+#   as_tibble() %>% 
+#   rownames_to_column("Feature") %>% 
+#   rename(Importance = value)
 
 
 category = case_when(

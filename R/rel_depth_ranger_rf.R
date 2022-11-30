@@ -11,7 +11,6 @@
 # Nov 23 switch to transformed depth based on updated model comparison
 
 
-library(plyr)
 library(tidyverse)
 library(caret)
 library(recipes)
@@ -100,7 +99,6 @@ train_depth_baked <- prep(depth_recipe) %>%
 rf_list <- readRDS(here::here("data", "model_fits", "rf_model_comparison.rds"))
 top_mod <- rf_list[[2]]$top_model
 
-
 ranger_rf <- ranger::ranger(
   depth ~ .,
   data = train_depth_baked,
@@ -111,8 +109,9 @@ ranger_rf <- ranger::ranger(
   importance = "permutation"
 )
 
-saveRDS(ranger_rf, 
-        here::here("data", "model_fits", "relative_rf_ranger.rds"))
+# saveRDS(ranger_rf, 
+#         here::here("data", "model_fits", "relative_rf_ranger.rds"))
+ranger_rf <- readRDS(here::here("data", "model_fits", "relative_rf_ranger.rds"))
 
 
 # CHECK PREDS ------------------------------------------------------------------
@@ -212,33 +211,25 @@ dev.off()
 
 # VARIABLE IMPORTANCE WITH PARTY PACKAGE ---------------------------------------
 
-rf_party <- party::cforest(
-  depth ~ .,
-  data = train_depth_baked,
-  control = party::cforest_unbiased(
-    mtry = top_mod$tuneValue$mtry,
-    ntree = top_mod$param$num.trees
-    )
-)
+## TAKES TOO LONG TO COMPLETE
 
-imp1 <- permimp::permimp(rf_party, conditional = TRUE, progressBar = TRUE)
-
+# rf_party <- party::cforest(
+#   depth ~ .,
+#   data = train_depth_baked,
+#   control = party::cforest_unbiased(
+#     mtry = top_mod$tuneValue$mtry,
+#     ntree = top_mod$param$num.trees
+#     )
+# )
+# 
+# imp1 <- permimp::permimp(rf_party, conditional = TRUE, progressBar = TRUE)
+# 
 
 # imp <- rf_party %>%
 #   party::varimp(conditional = TRUE) %>% 
 #   as_tibble() %>% 
 #   rownames_to_column("Feature") %>% 
 #   rename(Importance = value)
-
-
-category = case_when(
-  var %in% c("mean_bathy", "shore_dist", "utm_x", "utm_y",
-             "mean_slope") ~ "spatial",
-  var %in% c("det_day", "det_dayx", "det_dayy",
-             "day_night_night", "moon_illuminated") ~ "temporal",
-  var %in% c("stage_mature", "fl", "mean_log_e") ~ "biological",
-  TRUE ~ "dynamic"
-)
 
 
 # COUNTERFACTUAL PREDICT -------------------------------------------------------
@@ -365,7 +356,7 @@ new_dat_trim <- new_dat[1:2, ] %>%
     det_dayx = sin(2 * pi * local_day / 365),
     det_dayy = cos(2 * pi * local_day / 365)
   ) 
-mat_dat <- new_dat_trim %>% 
+mat_dat <- new_dat_trim %>%  
   mutate(
     stage_mature = c(0, 1),
     stage = factor(stage_mature, labels = c("immature", "mature"))
@@ -378,10 +369,14 @@ mat_dat <- new_dat_trim %>%
     up = -1 * (mean + (qnorm(0.975) * se)),
     mean = -1 * mean
   ) 
+#issues calculating SEs
+#similar here: https://github.com/imbs-hl/ranger/issues/201
+
 mat_plot <- ggplot(mat_dat, aes(x = stage)) +
   geom_pointrange(aes(y = mean, ymin = lo, ymax = up)) +
   ggsidekick::theme_sleek() +
   labs(title = "Maturity Counterfactual")
+
 dn_plot <- new_dat_trim %>% 
   mutate(
     day_night_night = c(0, 1)
@@ -400,65 +395,11 @@ dn_plot <- new_dat_trim %>%
   labs(title = "Day/Night Counterfactual")
 
 
-pdf(here::here("figs", "depth_ml", "counterfactual_ranger_ji.pdf"),
+pdf(here::here("figs", "ms_figs_rel", "counterfactual_ranger_ji.pdf"),
     height = 6, width = 8)
 plot_list
 mat_plot
 dn_plot
-dev.off()
-
-
-## cleaned up versions for manuscript main text
-# calculate overall depth range for y axis
-unnest_cf <- counterfac_tbl %>% 
-  filter(var_in %in% c("mean_bathy", "fl", "local_day")) %>% 
-  unnest(cols = "preds") %>% 
-  mutate(
-    lo = -1 * (mean + (qnorm(0.025) * se)),
-    up = -1 * (mean + (qnorm(0.975) * se))
-  )
-y_range <- c(min(unnest_cf$up) - 1, max(unnest_cf$lo) + 1) %>% 
-  round(digits = 0)
-
-bathy_cond <- plot_list[[1]] + 
-  ylim(y_range) +
-  labs(x = "Mean Bathymetry Depth") +
-  theme(
-    axis.title.y = element_blank()
-  )
-fl_cond <- plot_list[[2]] + 
-  ylim(y_range) +
-  labs(x = "Fork Length") +
-  theme(
-    axis.title.y = element_blank()
-  )
-yday_cond <- plot_list[[3]] + 
-  ylim(y_range) +
-  labs(x = "Year Day") +
-  theme(
-    axis.title.y = element_blank()
-  )
-mat_cond <- ggplot(mat_dat, aes(x = stage)) +
-  geom_pointrange(aes(y = mean, ymin = lo, ymax = up)) +
-  ggsidekick::theme_sleek() +
-  ylim(y_range) +
-  labs(x = "Maturity Stage") +
-  theme(
-    axis.title.y = element_blank()
-  )
-panel1 <- cowplot::plot_grid(
-  bathy_cond, fl_cond, yday_cond, mat_cond, nrow = 2
-)
-
-y_grob <- grid::textGrob("Predicted Mean Depth", rot = 90)
-
-png(here::here("figs", "ms_figs", "counterfac_effects.png"),
-    height = 5, width = 5, 
-    units = "in", res = 250)
-gridExtra::grid.arrange(
-  gridExtra::arrangeGrob(
-    panel1, left = y_grob)
-  )
 dev.off()
 
 
@@ -538,9 +479,12 @@ colnames(pred_rf1$predictions) <- c("lo", "med", "up")
 
 pred_dat2 <- pred_dat1 %>%
   mutate(
-    pred_med = pred_rf1$predictions[, "med"],
-    pred_lo = pred_rf1$predictions[, "lo"],
-    pred_up = pred_rf1$predictions[, "up"],
+    rel_pred_med = pred_rf1$predictions[, "med"],
+    rel_pred_lo = pred_rf1$predictions[, "lo"],
+    rel_pred_up = pred_rf1$predictions[, "up"],
+    pred_med = pred_rf1$predictions[, "med"] * mean_bathy,
+    pred_lo = pred_rf1$predictions[, "lo"] * mean_bathy,
+    pred_up = pred_rf1$predictions[, "up"] * mean_bathy,
     utm_x_m = utm_x * 1000,
     utm_y_m = utm_y * 1000,
     pred_int_width = pred_up - pred_lo
@@ -553,6 +497,15 @@ base_plot <- ggplot() +
   scale_x_continuous(expand = c(0, 0)) +
   scale_y_continuous(expand = c(0, 0))
   
+rel_depth <- base_plot +
+  geom_raster(data = pred_dat2, 
+              aes(x = utm_x_m, y = utm_y_m, fill = rel_pred_med)) +
+  geom_sf(data = coast_utm) +
+  scale_fill_viridis_c(name = "Relative Depth",
+                       direction = -1, 
+                       option = "A") +
+  theme(legend.position = "top")
+
 mean_depth <- base_plot +
   geom_raster(data = pred_dat2, 
               aes(x = utm_x_m, y = utm_y_m, fill = pred_med)) +
@@ -570,227 +523,10 @@ var_depth <- base_plot +
                        direction = -1)  +
   theme(legend.position = "top")
 
-avg_depth <- cowplot::plot_grid(mean_depth, var_depth, ncol = 2)
+avg_depth <- cowplot::plot_grid(rel_depth, mean_depth, var_depth, ncol = 3)
 
-png(here::here("figs", "ms_figs", "avg_depth.png"), height = 5, width = 8, 
+png(here::here("figs", "ms_figs_rel", "avg_depth.png"), height = 5, width = 8, 
     units = "in", res = 250)
 avg_depth
 dev.off()
-
-
-## generate spatial contrasts
-# 1) seasonal effects for immature fish
-# 2) maturity effects for avg (July 1)
-# 3) moon illumination effects for avg  (July 1)
-stage_dat <- depth_dat_raw %>% 
-  select(vemco_code, fl, mean_log_e, stage) %>% 
-  distinct() %>% 
-  group_by(stage) %>% 
-  dplyr::summarize(
-    fl = mean(fl),
-    mean_log_e = mean(mean_log_e)
-  ) %>% 
-  mutate(stage_mature = ifelse(stage == "mature", 1, 0)) %>% 
-  rbind(., 
-        data.frame(
-          stage = "average",
-          fl = mean(depth_dat_raw$fl),
-          mean_log_e = mean(depth_dat_raw$mean_log_e),
-          stage_mature = 0.5
-        ))
-
-pred_tbl <- tibble(
-  contrast = rep(c("season", "maturity", "moon light", "dvm"), each = 2),
-  local_day = c(16, 197, 197, 197, 197, 197, 197, 197),
-  stage_mature = c(0, 0, 0, 1, 0.5, 0.5, 0.5, 0.5),
-  moon_illuminated = c(0.5, 0.5, 0.5, 0.5, 0, 1, 0.5, 0.5),
-  day_night_night = c(0.5, 0.5, 0.5, 0.5, 1, 1, 0, 1)
-) %>% 
-  mutate(
-    det_dayx = sin(2 * pi * local_day / 365),
-    det_dayy = cos(2 * pi * local_day / 365),
-    season = fct_recode(as.factor(local_day), 
-                        "winter" = "16", "summer" = "197"),
-    month = factor(as.factor(local_day), labels = c("1", "7")),
-    # create prediction grid based on fixed covariates
-    pred_grid = purrr::pmap(
-      list(det_dayx, det_dayy, moon_illuminated, month, day_night_night,
-           stage_mature),
-      function (u, v, w, x, y, z) {
-        bath_grid %>%
-          mutate(
-            det_dayx = u,
-            det_dayy = v,
-            moon_illuminated = w,
-            month = x,
-            day_night_night = y,
-            stage_mature = z) %>%
-          left_join(., stage_dat %>% select(-stage), by = "stage_mature") %>%
-          left_join(., roms_month_means, by = "month")
-      }
-    ),
-    # generate predictions
-    preds = purrr::map(pred_grid, function (x) {
-      pred_rf <- predict(ranger_rf, quantiles = c(0.1, 0.5, 0.9),
-                         newdata = x, all = TRUE)
-      colnames(pred_rf) <- c("lo", "med", "up")
-      
-      bath_grid %>%
-        mutate(
-          pred_med = pred_rf[, "med"],
-          pred_lo = pred_rf[, "lo"],
-          pred_up = pred_rf[, "up"]
-        )
-    }
-    )
-)
-
-pred_dat <- pred_tbl %>% 
-  select(contrast, stage_mature, season, moon_illuminated, day_night_night,
-         preds) %>% 
-  unnest(cols = preds) %>% 
-  mutate(utm_x_m = utm_x * 1000,
-         utm_y_m = utm_y * 1000,
-         pred_int_width = pred_up - pred_lo) %>% 
-  filter(!mean_bathy > 400)
-
-
-# calculate differences for each contrast scenario
-season_eff <- pred_dat %>% 
-  filter(contrast == "season") %>% 
-  mutate(
-    mean_depth = mean(pred_med)
-  ) %>% 
-  select(season, mean_bathy:shore_dist, utm_x_m, utm_y_m, pred_med,
-         mean_depth) %>% 
-  pivot_wider(names_from = season, values_from = pred_med) %>%
-  mutate(season_diff = (winter - summer) / summer) 
-season_map <- base_plot +
-  geom_raster(data = season_eff, 
-              aes(x = utm_x_m, y = utm_y_m, fill = season_diff)) +
-  geom_sf(data = coast_utm) +
-  scale_fill_gradientn(colours = c("red", "white", "blue"), 
-                       values = scales::rescale(c(-6, 0, 6)),
-                       guide = "colorbar", 
-                       limits = c(-6, 6)) +
-  labs(title = "Season Effects")
-
-
-mat_eff <- pred_dat %>% 
-  filter(contrast == "maturity") %>% 
-  mutate(
-    mean_depth = mean(pred_med)
-  ) %>% 
-  select(stage_mature, mean_bathy:shore_dist, utm_x_m, utm_y_m, pred_med,
-         mean_depth) %>% 
-  pivot_wider(names_from = stage_mature, values_from = pred_med) %>%
-  mutate(mat_diff = (`0` - `1`) / `1`)
-mat_map <- base_plot +
-  geom_raster(data = mat_eff, 
-              aes(x = utm_x_m, y = utm_y_m, fill = mat_diff)) +
-  geom_sf(data = coast_utm) +
-  scale_fill_gradientn(colours = c("red", "white", "blue"), 
-                       values = scales::rescale(c(-6, 0, 6)),
-                       guide = "colorbar", 
-                       limits = c(-6, 6)) +
-  labs(title = "Maturity Effects")
-
-
-moon_eff <- pred_dat %>% 
-  filter(contrast == "moon light") %>% 
-  mutate(
-    mean_depth = mean(pred_med)
-  ) %>% 
-  select(moon_illuminated, mean_bathy:shore_dist, utm_x_m, utm_y_m, pred_med,
-         mean_depth) %>% 
-  pivot_wider(names_from = moon_illuminated, values_from = pred_med) %>%
-  mutate(moon_diff = (`0` - `1`) / `1`)
-moonlight_map <- base_plot +
-  geom_raster(data = moon_eff, 
-              aes(x = utm_x_m, y = utm_y_m, fill = moon_diff)) +
-  geom_sf(data = coast_utm) +
-  scale_fill_gradientn(colours = c("red", "white", "blue"), 
-                       values = scales::rescale(c(-6, 0, 6)),
-                       guide = "colorbar", 
-                       limits = c(-6, 6)) +
-  labs(title = "Moonlight Effects")
-
-
-dvm_eff <- pred_dat %>% 
-  filter(contrast == "dvm") %>% 
-  mutate(
-    mean_depth = mean(pred_med)
-  ) %>% 
-  select(day_night_night, mean_bathy:shore_dist, utm_x_m, utm_y_m, pred_med,
-         mean_depth) %>% 
-  pivot_wider(names_from = day_night_night, values_from = pred_med) %>%
-  # negative is deeper at night relative to night, pos shallower at night rel to night
-  mutate(dvm_diff = (`0` - `1`) / `1`) 
-dvm_map <- base_plot +
-  geom_raster(data = dvm_eff, 
-              aes(x = utm_x_m, y = utm_y_m, fill = dvm_diff)) +
-  geom_sf(data = coast_utm) +
-  scale_fill_gradientn(colours = c("red", "white", "blue"), 
-                       values = scales::rescale(c(-6, 0, 6)),
-                       guide = "colorbar", 
-                       limits = c(-6, 6)) +
-  labs(title = "DVM Effects")
-
-
-pdf(here::here("figs", "depth_ml", "spatial_contrasts.pdf"))
-season_map
-mat_map
-moonlight_map
-dvm_map
-dev.off()
-
-
-# combine season and maturity predictions and plot joined version
-# NOTE: constrains maximum difference to be 200% even though range extends to 
-# 600%
-season_eff2 <- season_eff %>% 
-  mutate(comp = "season") %>% 
-  select(mean_bathy:mean_depth, comp, rel_diff = season_diff)
-mat_eff2 <- mat_eff %>% 
-  mutate(comp = "maturity") %>% 
-  select(mean_bathy:mean_depth, comp, rel_diff = mat_diff)
-
-png(here::here("figs", "ms_figs", "contrast_map.png"), height = 5, width = 8, 
-    units = "in", res = 250)
-base_plot +
-  geom_raster(data = rbind(season_eff2, mat_eff2) %>% 
-                mutate(
-                  rel_diff = ifelse(rel_diff > 2, 2, rel_diff)
-                ), 
-              aes(x = utm_x_m, y = utm_y_m, fill = rel_diff)) +
-  geom_sf(data = coast_utm) +
-  scale_fill_gradient2(
-    name = "Relative Depth Difference"
-  ) +
-  facet_wrap(~comp) +
-  theme(legend.position = "top")
-dev.off()
-  
-
-# SPATIAL RESIDUALS ------------------------------------------------------------
-
-dum <- train_depth_baked %>% 
-  mutate(
-    pred = ranger_rf$predicted,
-    resid = pred - depth,
-    season = case_when(
-      det_day >= 1 & det_day < 90 ~ "winter",
-      det_day >= 91 & det_day < 182 ~ "spring",
-      det_day >= 182 & det_day < 274 ~ "summer",
-      det_day >= 274 ~ "fall"
-    ),
-    utm_x_m = utm_x * 1000,
-    utm_y_m = utm_y * 1000
-    )
-
-base_plot +
-  geom_jitter(data = dum, aes(x = utm_x_m, y = utm_y_m, fill = resid),
-              shape = 21) +
-  scale_fill_viridis_c(name = "Residual")
-# no obvious pattern
 

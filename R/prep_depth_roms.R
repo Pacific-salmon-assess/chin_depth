@@ -13,7 +13,7 @@ rec <- readRDS(here::here("data", "receivers_all.RDS"))$rec_all
 
 # life stage estimates
 dum <- readRDS(here::here("data", "acousticOnly_GSI.RDS"))
-stage_dat <- readRDS(here::here("data", "lifestage_df.RDS")) %>% 
+stage_dat <- readRDS(here::here("data", "agg_lifestage_df.RDS")) %>% 
   left_join(., 
             dum %>% dplyr::select(vemco_code = acoustic_year, mean_log_e, 
                                   cu_name), 
@@ -427,10 +427,6 @@ depth_dat2 <- cbind(depth_dat, temp %>% dplyr::select(sunrise, sunset)) %>%
     local_day, det_dayx, det_dayy, year, 
     local_hour, day_night, moon_illuminated, pos_depth = depth,
     rel_depth, logit_rel_depth) 
-
-# depth_dat %>%
-#     select_if(function(x) any(is.na(x))) %>%
-#     summarise_each(funs(sum(is.na(.))))
 
 saveRDS(depth_dat2, here::here("data", "depth_dat_nobin.RDS"))
 

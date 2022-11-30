@@ -90,9 +90,6 @@ depth_ctrl <-   caret::trainControl(
 )
 
 
-# refit top model in random forest, using quantregforest to generate uncertainty
-# intervals
-
 # apply recipe to dataframe to interpolate values
 train_depth_baked <- prep(depth_recipe) %>%
   bake(., 
@@ -100,16 +97,22 @@ train_depth_baked <- prep(depth_recipe) %>%
          dplyr::select(-ind_block))
 
 
+# refit top model in random forest, using ranger to generate uncertainty
+# intervals
+
+# pull model attributes from top ranger
+rf_list <- readRDS(here::here("data", "model_fits", "rf_model_comparison.rds"))
+top_mod <- rf_list[[3]]$top_model
+
 ranger_rf <- ranger::ranger(
   depth ~ .,
   data = train_depth_baked,
-  num.trees = 1500,
-  mtry = 6,
+  num.trees = top_mod$param$num.trees,
+  mtry = top_mod$tuneValue$mtry,
   keep.inbag = TRUE,
   quantreg = TRUE,
   importance = "permutation"
 )
-# 
 # saveRDS(ranger_rf, here::here("data", "model_fits", "depth_ranger.rds"))
 
 ranger_rf <- readRDS(here::here("data", "model_fits", "depth_ranger.rds"))
@@ -167,6 +170,7 @@ fit_obs <- ggplot() +
   labs(
     x = "Observed Depth", y = "Predicted Mean Depth"
   ) +
+  geom_abline(slope = 1, intercept = 0) +
   scale_fill_discrete(name = "") +
   ggsidekick::theme_sleek() 
 
@@ -323,8 +327,8 @@ counterfac_tbl <- tibble(
                              gen_pred_dat),
     preds = purrr::map(pred_dat_in, 
                        pred_foo, 
-                       type = "se", 
-                       se.method = "infjack")
+                       type = "quantiles",
+                       quantiles = c(0.1, 0.5, 0.9))
   )
 
 plot_list <- purrr::map2(
@@ -333,8 +337,8 @@ plot_list <- purrr::map2(
   function (var, preds) {
     dum <- preds %>%
       mutate(
-        lo = -1 * (mean + (qnorm(0.025) * se)),
-        up = -1 * (mean + (qnorm(0.975) * se)),
+        lo = -1 * lo, #(mean + (qnorm(0.025) * se)),
+        up = -1 * up, #(mean + (qnorm(0.975) * se)),
         mean = -1 * mean
       )
     plot_foo(data = dum, var = var)
@@ -354,11 +358,11 @@ mat_dat <- new_dat_trim %>%
     stage = factor(stage_mature, labels = c("immature", "mature"))
   ) %>% 
   pred_foo(., 
-           type = "se", 
-           se.method = "infjack") %>% 
+           type = "quantiles",
+           quantiles = c(0.1, 0.5, 0.9)) %>% 
   mutate(
-    lo = -1 * (mean + (qnorm(0.025) * se)),
-    up = -1 * (mean + (qnorm(0.975) * se)),
+    lo = -1 * lo, #(mean + (qnorm(0.025) * se)),
+    up = -1 * up, #(mean + (qnorm(0.975) * se)),
     mean = -1 * mean
   ) 
 mat_plot <- ggplot(mat_dat, aes(x = stage)) +
@@ -370,11 +374,11 @@ dn_plot <- new_dat_trim %>%
     day_night_night = c(0, 1)
   ) %>% 
   pred_foo(., 
-           type = "se", 
-           se.method = "infjack") %>% 
+           type = "quantiles",
+           quantiles = c(0.1, 0.5, 0.9)) %>% 
   mutate(
-    lo = -1 * (mean + (qnorm(0.025) * se)),
-    up = -1 * (mean + (qnorm(0.975) * se)),
+    lo = -1 * lo, #(mean + (qnorm(0.025) * se)),
+    up = -1 * up, #(mean + (qnorm(0.975) * se)),
     mean = -1 * mean
   ) %>% 
   ggplot(., aes(x = as.factor(day_night_night))) +
@@ -397,8 +401,8 @@ unnest_cf <- counterfac_tbl %>%
   filter(var_in %in% c("mean_bathy", "fl", "local_day")) %>% 
   unnest(cols = "preds") %>% 
   mutate(
-    lo = -1 * (mean + (qnorm(0.025) * se)),
-    up = -1 * (mean + (qnorm(0.975) * se))
+    lo = -1 * lo,
+    up = -1 * up
   )
 y_range <- c(min(unnest_cf$up) - 1, max(unnest_cf$lo) + 1) %>% 
   round(digits = 0)
@@ -421,16 +425,22 @@ yday_cond <- plot_list[[3]] +
   theme(
     axis.title.y = element_blank()
   )
-mat_cond <- ggplot(mat_dat, aes(x = stage)) +
-  geom_pointrange(aes(y = mean, ymin = lo, ymax = up)) +
-  ggsidekick::theme_sleek() +
+moon_cond <- plot_list[[10]] + 
   ylim(y_range) +
-  labs(x = "Maturity Stage") +
+  labs(x = "Proportion of Moon Illuminated") +
   theme(
     axis.title.y = element_blank()
   )
+# mat_cond <- ggplot(mat_dat, aes(x = stage)) +
+#   geom_pointrange(aes(y = mean, ymin = lo, ymax = up)) +
+#   ggsidekick::theme_sleek() +
+#   ylim(y_range) +
+#   labs(x = "Maturity Stage") +
+#   theme(
+#     axis.title.y = element_blank()
+#   )
 panel1 <- cowplot::plot_grid(
-  bathy_cond, fl_cond, yday_cond, mat_cond, nrow = 2
+  bathy_cond, fl_cond, yday_cond, moon_cond, nrow = 2
 )
 
 y_grob <- grid::textGrob("Predicted Mean Depth", rot = 90)
@@ -614,15 +624,17 @@ pred_tbl <- tibble(
     ),
     # generate predictions
     preds = purrr::map(pred_grid, function (x) {
-      pred_rf <- predict(ranger_rf, quantiles = c(0.1, 0.5, 0.9),
-                         newdata = x, all = TRUE)
-      colnames(pred_rf) <- c("lo", "med", "up")
-      
+      pred_rf <- predict(ranger_rf, 
+                         type = "quantiles",
+                         quantiles = c(0.1, 0.5, 0.9),
+                         data = x, all = TRUE)
+      colnames(pred_rf$predictions) <- c("lo", "med", "up")
+
       bath_grid %>%
         mutate(
-          pred_med = pred_rf[, "med"],
-          pred_lo = pred_rf[, "lo"],
-          pred_up = pred_rf[, "up"]
+          pred_med = pred_rf$predictions[, "med"],
+          pred_lo = pred_rf$predictions[, "lo"],
+          pred_up = pred_rf$predictions[, "up"]
         )
     }
     )

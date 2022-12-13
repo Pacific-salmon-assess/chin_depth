@@ -109,8 +109,8 @@ ranger_rf <- ranger::ranger(
   importance = "permutation"
 )
 
-# saveRDS(ranger_rf, 
-#         here::here("data", "model_fits", "relative_rf_ranger.rds"))
+saveRDS(ranger_rf,
+        here::here("data", "model_fits", "relative_rf_ranger.rds"))
 ranger_rf <- readRDS(here::here("data", "model_fits", "relative_rf_ranger.rds"))
 
 

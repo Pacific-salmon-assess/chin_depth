@@ -5,6 +5,8 @@
 ## 1) Model type (GBM vs. RF)
 ## 2) Hyperparameters
 ## 3) Response variable (logit transformed, relative depth, absolute depth)
+## 4) Add kriging random forest fit only to absolute depth using identical
+## hyperparameters to RF in 3)
 
 
 library(plyr)
@@ -59,7 +61,7 @@ train_depth <- depth_dat %>% filter(!ind_block == "5") %>% droplevels()
 test_depth <- depth_dat %>% filter(ind_block == "5") %>% droplevels() 
 
 
-## MODELS ----------------------------------------------------------------------
+## PREP MODELS -----------------------------------------------------------------
 
 # helper function for cleaning up stage-specific data
 stage_foo <- function(dat, stage_in) {
@@ -111,9 +113,13 @@ model_tbl$recipe <- purrr::map(
 })
 
 
+## FIT MODELS ------------------------------------------------------------------
+
 ## shared settings
-train_folds <- groupKFold(model_tbl$train_data[[1]]$ind_block,
-                          k = length(unique(model_tbl$train_data[[1]]$ind_block)))
+train_folds <- groupKFold(
+  model_tbl$train_data[[1]]$ind_block,
+  k = length(unique(model_tbl$train_data[[1]]$ind_block))
+  )
 ctrl <-   trainControl(
   method="repeatedcv",
   index = train_folds
@@ -226,10 +232,49 @@ top_rangers <- purrr::map2(rf_list, rf_train_list, function (x, y) {
   )
 })
 
+
+## fit ranger with kriging to equivalent RF model parameterized above
+## NOTE: fit to absolute depth only
+
+library(slmrf)
+
+krig_rf_dat_train <- rf_train_list[[3]]
+krig_rf_dat_test <- model_tbl %>% 
+  filter(model_type == "rf",
+         response == "depth") %>% 
+  pull(test_data) %>% 
+  as.data.frame()
+coord_mat <- krig_rf_dat_train %>%
+  select(utm_x, utm_y) %>%
+  as.matrix()
+dist_mat <- compute_distance(coord_mat)
+top_real_rf <- rf_list[[3]]$top_model
+
+# fit RF without spatial coordinates to feed into fit_rfrk
+dum_fit <- randomForest::randomForest(
+  depth_var ~ ., 
+  data = krig_rf_dat_train %>% 
+    select(!starts_with("utm")), 
+  num.trees = top_real_rf$param$num.trees,
+  mtry = top_real_rf$tuneValue$mtry
+)
+krig_fit <- fit_rfrk(dum_fit, krig_rf_dat_train$depth, dist_mat)
+
+krig_preds <- pred_rfrk(
+  rf = dum_fit,
+  rfrk = krig_fit,
+  obsv_coord = krig_rf_dat_train %>% select(utm_x, utm_y),
+  pred_coord = krig_rf_dat_test %>% select(utm_x, utm_y),
+  Xp = krig_rf_dat_test %>% select(-c(utm_x, utm_y)),
+  computeSE = FALSE
+)
+
+
 # add models to tbl
 rf_tbl$top_model <- top_rangers #map(rf_list, function (x) x$top_model)
 gbm_tbl$top_model <- map(gbm_list, function (x) x$top_model) 
 model_tbl <- rbind(rf_tbl, gbm_tbl)
+
 
 
 # calculate RMSE relative to observations in real space for top models

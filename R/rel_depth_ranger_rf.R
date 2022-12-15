@@ -655,7 +655,7 @@ pred_tbl <- tibble(
   )
   
 pred_dat <- pred_tbl %>% 
-  select(contrast, season, #stage_mature, , moon_illuminated, day_night_night,
+  select(contrast, season, stage_mature, moon_illuminated, day_night_night,
          preds) %>% 
   unnest(cols = preds)
 
@@ -664,9 +664,9 @@ pred_dat <- pred_tbl %>%
 # by whether real or scaled predictions are used)
 season_eff <- pred_dat %>% 
   filter(contrast == "season") %>% 
-  select(season, mean_bathy:shore_dist, utm_x_m, utm_y_m, pred_med) %>% 
-  pivot_wider(names_from = season, values_from = pred_med) %>%
-  mutate(season_diff = (winter - summer) / summer) 
+  select(season, mean_bathy:shore_dist, utm_x_m, utm_y_m, rel_pred_med) %>% 
+  pivot_wider(names_from = season, values_from = rel_pred_med) %>%
+  mutate(season_diff = (winter - summer)) 
 season_map <- base_plot +
   geom_raster(data = season_eff, 
               aes(x = utm_x_m, y = utm_y_m, fill = season_diff)) +
@@ -681,9 +681,9 @@ season_map <- base_plot +
 
 mat_eff <- pred_dat %>% 
   filter(contrast == "maturity") %>% 
-  select(stage_mature, mean_bathy:shore_dist, utm_x_m, utm_y_m, pred_med) %>% 
-  pivot_wider(names_from = stage_mature, values_from = pred_med) %>%
-  mutate(mat_diff = (`0` - `1`) / `1`)
+  select(stage_mature, mean_bathy:shore_dist, utm_x_m, utm_y_m, rel_pred_med) %>% 
+  pivot_wider(names_from = stage_mature, values_from = rel_pred_med) %>%
+  mutate(mat_diff = (`0` - `1`))
 mat_map <- base_plot +
   geom_raster(data = mat_eff, 
               aes(x = utm_x_m, y = utm_y_m, fill = mat_diff)) +
@@ -694,9 +694,10 @@ mat_map <- base_plot +
 
 moon_eff <- pred_dat %>% 
   filter(contrast == "moon light") %>% 
-  select(moon_illuminated, mean_bathy:shore_dist, utm_x_m, utm_y_m, pred_med) %>% 
-  pivot_wider(names_from = moon_illuminated, values_from = pred_med) %>%
-  mutate(moon_diff = (`0` - `1`) / `1`)
+  select(moon_illuminated, mean_bathy:shore_dist, utm_x_m, utm_y_m, rel_pred_med) %>%
+  pivot_wider(names_from = moon_illuminated, values_from = rel_pred_med) %>%
+  # negative is deeper with full moonlight, pos deeper with no moonlight 
+  mutate(moon_diff = (`0` - `1`))
 moonlight_map <- base_plot +
   geom_raster(data = moon_eff, 
               aes(x = utm_x_m, y = utm_y_m, fill = moon_diff)) +
@@ -707,10 +708,11 @@ moonlight_map <- base_plot +
 
 dvm_eff <- pred_dat %>% 
   filter(contrast == "dvm") %>% 
-  select(day_night_night, mean_bathy:shore_dist, utm_x_m, utm_y_m, pred_med) %>% 
-  pivot_wider(names_from = day_night_night, values_from = pred_med) %>%
+  select(day_night_night, mean_bathy:shore_dist, utm_x_m, utm_y_m,
+         rel_pred_med) %>% 
+  pivot_wider(names_from = day_night_night, values_from = rel_pred_med) %>%
   # negative is deeper at night relative to night, pos shallower at night rel to night
-  mutate(dvm_diff = (`0` - `1`) / `1`) 
+  mutate(dvm_diff = (`0` - `1`))
 dvm_map <- base_plot +
   geom_raster(data = dvm_eff, 
               aes(x = utm_x_m, y = utm_y_m, fill = dvm_diff)) +
@@ -745,9 +747,15 @@ comb_preds <- list(season_eff2,
                    mat_eff2,
                    moon_eff2,
                    dvm_eff2) %>% 
-  bind_rows()
+  bind_rows() %>% 
+  mutate(
+    comp = factor(comp, levels = c("season", "maturity", "moonlight", "dvm"),
+                  labels = c("season", "maturity stage", "lunar cycle",
+                             "diurnal"))
+  )
 
-png(here::here("figs", "ms_figs", "contrast_map.png"), height = 5, width = 8, 
+png(here::here("figs", "ms_figs_rel", "contrast_map.png"), 
+    height = 6, width = 6, 
     units = "in", res = 250)
 base_plot +
   geom_raster(data = comb_preds, 
@@ -757,5 +765,8 @@ base_plot +
     name = "Relative Depth Difference"
   ) +
   facet_wrap(~comp) +
-  theme(legend.position = "top")
+  theme(legend.position = "top") +
+  theme(
+    axis.text = element_text(size = 8)
+  )
 dev.off()

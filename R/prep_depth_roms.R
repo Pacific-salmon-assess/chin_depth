@@ -543,9 +543,10 @@ dev.off()
 
 
 # utm grid for bathymetry maps
-coast_utm <- rbind(rnaturalearth::ne_states( "United States of America", 
-                                             returnclass = "sf"), 
-                   rnaturalearth::ne_states( "Canada", returnclass = "sf")) %>% 
+coast_utm <- coast_plotting %>% 
+  # rbind(rnaturalearth::ne_states( "United States of America",
+  #                                 returnclass = "sf"),
+  #       rnaturalearth::ne_states( "Canada", returnclass = "sf")) %>%
   sf::st_crop(., 
               xmin = -127.5, ymin = 46, xmax = -122, ymax = 49.5) %>% 
   sf::st_transform(., crs = sp::CRS("+proj=utm +zone=10 +units=m"))
@@ -553,7 +554,23 @@ coast_utm <- rbind(rnaturalearth::ne_states( "United States of America",
 bath_grid <- readRDS(here::here("data", "pred_bathy_grid_utm.RDS")) %>% 
   mutate(id = row_number(),
          shore_dist_km = shore_dist / 1000) %>% 
-  filter(depth < 400)
+  filter(depth < 400,
+         Y > (5095 * 1000))
+
+# location labels
+labs_dat <- data.frame(
+  X = c(439000, 431000, 510800, 300000, 260000),
+  Y = c(5303000, 5465000, 5187000, 5250000, 5310000),
+  lab = c("Juan de Fuca\nStrait", "Strait of\n Georgia", "Puget\nSound", 
+          "Washington\nCoast", "La Perouse\nBank")
+)
+
+# samp locations for Port Renfrew and Ukee
+loc_dat <- data.frame(
+  X = c(439006, 431804),
+  Y = c(5303202, 5468630),
+  shp = c(23, 24)
+)
 
 blank_p <- ggplot() + 
   ggsidekick::theme_sleek() +
@@ -562,29 +579,38 @@ blank_p <- ggplot() +
   scale_x_continuous(expand = c(0, 0)) +
   scale_y_continuous(expand = c(0, 0))
 
+
 depth_plot <- blank_p +
   geom_raster(data = bath_grid, 
               aes(x = X, y = Y, fill = depth)) +
   geom_sf(data = coast_utm) +
+  geom_label(data = labs_dat, aes(x = X, y = Y, label = lab), size = 3) +
   scale_fill_viridis_c(name = "Depth (m)", direction = -1) 
 slope_plot <- blank_p +
   geom_raster(data = bath_grid, 
               aes(x = X, y = Y, fill = slope)) +
   geom_sf(data = coast_utm) +
-  scale_fill_viridis_c(name = "Slope\n(degrees)", direction = -1) 
+  scale_fill_viridis_c(name = "Slope\n(degrees)", direction = -1) +
+  theme(legend.position = "right",
+        axis.text = element_blank())
 dist_plot <- blank_p +
   geom_raster(data = bath_grid, 
               aes(x = X, y = Y, fill = shore_dist_km)) +
   geom_sf(data = coast_utm) +
-  scale_fill_viridis_c(name = "Distance\nto Coast (km)", direction = -1) 
+  scale_fill_viridis_c(name = "Distance\nto Coast\n(km)", direction = -1) +
+  theme(legend.position = "right",
+        axis.text = element_blank())
 
+bathy_vars1 <- cowplot::plot_grid(
+  plotlist = list(slope_plot, dist_plot),
+  ncol = 1
+)
 bathy_vars <- cowplot::plot_grid(
-  plotlist = list(depth_plot, slope_plot, dist_plot),
-  nrow = 1
+  plotlist = list(depth_plot, bathy_vars1),
+  ncol = 2
 )
 
-
-png(here::here("figs", "ms_figs", "bathy_preds.png"),
+png(here::here("figs", "ms_figs_rel", "bathy_preds.png"),
     height = 5, width = 8, res = 250, units = "in")
 bathy_vars
 dev.off()

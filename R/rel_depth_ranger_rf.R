@@ -762,7 +762,7 @@ base_plot +
               aes(x = utm_x_m, y = utm_y_m, fill = rel_diff)) +
   geom_sf(data = coast_utm) +
   scale_fill_gradient2(
-    name = "Relative Depth Difference"
+    name = "Bathymetric\nDepth Ratio\nDifference"
   ) +
   facet_wrap(~comp) +
   theme(legend.position = "top") +

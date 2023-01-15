@@ -6,6 +6,31 @@
 library(tidyverse)
 
 
+## FUNCTIONS -------------------------------------------------------------------
+
+# add coordinates in UTM space
+lonlat_to_utm <- function(x, y, zone){
+  xy <- data.frame(ID = 1:length(x), X = x, Y = y)
+  sp::coordinates(xy) <- c("X", "Y")
+  sp::proj4string(xy) <- sp::CRS("+proj=longlat +datum=WGS84")  ## for example
+  res <- sp::spTransform(
+    xy, 
+    sp::CRS(
+      paste("+proj=utm +zone=",zone," +units=m +datum=WGS84 ellps=WGS84",
+            sep = '')
+      
+    ))
+  return(as.data.frame(res))
+}
+
+
+# function to make hours continuous
+time_foo <- function(x) {
+  lubridate::hour(x) + (lubridate::minute(x) / 60) + 
+    (lubridate::second(x) / 3600) 
+}
+
+
 ## PREP DEPTH DATA -------------------------------------------------------------
 
 # receiver data (includes bathymetric data generated in chin_tagging repo)
@@ -83,31 +108,6 @@ depth_dets1 <- rbind(depth_raw, depth_h) %>%
     )
   ) %>% 
   filter(!region == "fraser")
-
-
-## FUNCTIONS -------------------------------------------------------------------
-
-# add coordinates in UTM space
-lonlat_to_utm <- function(x, y, zone){
-  xy <- data.frame(ID = 1:length(x), X = x, Y = y)
-  sp::coordinates(xy) <- c("X", "Y")
-  sp::proj4string(xy) <- sp::CRS("+proj=longlat +datum=WGS84")  ## for example
-  res <- sp::spTransform(
-    xy, 
-    sp::CRS(
-      paste("+proj=utm +zone=",zone," +units=m +datum=WGS84 ellps=WGS84",
-            sep = '')
-      
-    ))
-  return(as.data.frame(res))
-}
-
-
-# function to make hours continuous
-time_foo <- function(x) {
-  lubridate::hour(x) + (lubridate::minute(x) / 60) + 
-    (lubridate::second(x) / 3600) 
-}
 
 
 ## EXPORT STATIONS -------------------------------------------------------------
@@ -544,9 +544,6 @@ dev.off()
 
 # utm grid for bathymetry maps
 coast_utm <- coast_plotting %>% 
-  # rbind(rnaturalearth::ne_states( "United States of America",
-  #                                 returnclass = "sf"),
-  #       rnaturalearth::ne_states( "Canada", returnclass = "sf")) %>%
   sf::st_crop(., 
               xmin = -127.5, ymin = 46, xmax = -122, ymax = 49.5) %>% 
   sf::st_transform(., crs = sp::CRS("+proj=utm +zone=10 +units=m"))
@@ -580,12 +577,25 @@ blank_p <- ggplot() +
   scale_y_continuous(expand = c(0, 0))
 
 
+# receivers 
+# rec_locs <- rec %>%
+#   filter(marine == "yes") %>% 
+#   select(station_latitude, station_longitude) %>% 
+#   distinct() 
+# rec_locs_utm <- lonlat_to_utm(rec_locs$station_longitude, rec_locs$station_latitude, 
+#                            zone = 10) 
+# rec_locs$utm_x <- rec_locs_utm$X 
+# rec_locs$utm_y <- rec_locs_utm$Y
+
+
+# make plots
 depth_plot <- blank_p +
   geom_raster(data = bath_grid, 
               aes(x = X, y = Y, fill = depth)) +
   geom_sf(data = coast_utm) +
   geom_label(data = labs_dat, aes(x = X, y = Y, label = lab), size = 3) +
   geom_point(data = loc_dat, aes(x = X, y = Y, shape = site), fill = "white") +
+  # geom_point(data = rec_locs, aes(x = utm_x, y = utm_y), colour = "red") +
   scale_shape_manual(values = c(21, 24), guide = NULL) +
   scale_fill_viridis_c(name = "Depth (m)", direction = -1) 
 slope_plot <- blank_p +

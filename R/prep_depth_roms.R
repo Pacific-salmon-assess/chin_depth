@@ -565,11 +565,11 @@ labs_dat <- data.frame(
           "Washington\nCoast", "La Perouse\nBank")
 )
 
-# samp locations for Port Renfrew and Ukee
+# sampling locations for Port Renfrew and Ukee
 loc_dat <- data.frame(
-  X = c(439006, 431804),
-  Y = c(5303202, 5468630),
-  shp = c(23, 24)
+  X = c(313709, 385246),
+  Y = c(5421491, 5378367),
+  site = c("U", "PR")
 )
 
 blank_p <- ggplot() + 
@@ -585,6 +585,8 @@ depth_plot <- blank_p +
               aes(x = X, y = Y, fill = depth)) +
   geom_sf(data = coast_utm) +
   geom_label(data = labs_dat, aes(x = X, y = Y, label = lab), size = 3) +
+  geom_point(data = loc_dat, aes(x = X, y = Y, shape = site), fill = "white") +
+  scale_shape_manual(values = c(21, 24), guide = NULL) +
   scale_fill_viridis_c(name = "Depth (m)", direction = -1) 
 slope_plot <- blank_p +
   geom_raster(data = bath_grid, 

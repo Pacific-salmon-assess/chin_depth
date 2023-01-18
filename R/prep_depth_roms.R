@@ -466,9 +466,9 @@ coast_plotting <- readRDS(here::here("data",
                                      "coast_major_river_sf_plotting.RDS"))
 sf::st_crs(coast_plotting) <- 4326
 
-# detections cleaned above
-depth_dat2 <- readRDS(here::here("data", "depth_dat_nobin.RDS"))
 
+## Detection Maps
+depth_dat2 <- readRDS(here::here("data", "depth_dat_nobin.RDS"))
 
 # base receiver plot
 base_rec_plot <- ggplot() +
@@ -497,18 +497,13 @@ rec_dets <- depth_dat2 %>%
     det_bin = cut(n_dets, breaks=c(0, 25, 100, 500))
   )
 
-rec_plot <- base_rec_plot +
+rec_plot_det <- base_rec_plot +
   geom_point(data = rec_dets,
              aes(x = longitude, y = latitude, size = n_dets),
              shape = 21, fill = "red", alpha = 0.4,
              inherit.aes = FALSE) +
   scale_size_continuous(name = "Number of \nDetections",
                         breaks = c(0, 25, 100, 500, 1000)) 
-
-png(here::here("figs", "ms_figs", "rec_locations.png"),
-    height = 5, width = 7, res = 250, units = "in")
-rec_plot
-dev.off()
 
 
 # calculate mean depth by by receiver
@@ -542,10 +537,17 @@ rec_plot_depth
 dev.off()
 
 
-# utm grid for bathymetry maps
-coast_utm <- coast_plotting %>% 
+## Bathymetry Maps
+coast2 <- rbind(rnaturalearth::ne_states( "United States of America",
+                                          returnclass = "sf"),
+                rnaturalearth::ne_states( "Canada", returnclass = "sf"))
+coast_utm_bathy <- coast2 %>% 
   sf::st_crop(., 
               xmin = -127.5, ymin = 46, xmax = -122, ymax = 49.5) %>% 
+  sf::st_transform(., crs = sp::CRS("+proj=utm +zone=10 +units=m"))
+coast_utm_rec <- coast2 %>% 
+  sf::st_crop(., 
+              xmin = -128.5, ymin = 46, xmax = -122, ymax = 51.5) %>% 
   sf::st_transform(., crs = sp::CRS("+proj=utm +zone=10 +units=m"))
 
 bath_grid <- readRDS(here::here("data", "pred_bathy_grid_utm.RDS")) %>% 
@@ -578,37 +580,42 @@ blank_p <- ggplot() +
 
 
 # receivers 
-# rec_locs <- rec %>%
-#   filter(marine == "yes") %>% 
-#   select(station_latitude, station_longitude) %>% 
-#   distinct() 
-# rec_locs_utm <- lonlat_to_utm(rec_locs$station_longitude, rec_locs$station_latitude, 
-#                            zone = 10) 
-# rec_locs$utm_x <- rec_locs_utm$X 
-# rec_locs$utm_y <- rec_locs_utm$Y
+rec_locs <- rec %>%
+  filter(marine == "yes") %>%
+  select(station_latitude, station_longitude) %>%
+  distinct()
+rec_locs_utm <- lonlat_to_utm(rec_locs$station_longitude, rec_locs$station_latitude,
+                           zone = 10)
+rec_locs$utm_x <- rec_locs_utm$X
+rec_locs$utm_y <- rec_locs_utm$Y
 
+# TODO: add bounding box to receiver map; select colors; move La P label; make 
+# multipanel
 
 # make plots
-depth_plot <- blank_p +
-  geom_raster(data = bath_grid, 
-              aes(x = X, y = Y, fill = depth)) +
-  geom_sf(data = coast_utm) +
+rec_plot <-  blank_p +
+  geom_sf(data = coast_utm_rec, fill = "darkgrey") +
   geom_label(data = labs_dat, aes(x = X, y = Y, label = lab), size = 3) +
-  geom_point(data = loc_dat, aes(x = X, y = Y, shape = site), fill = "white") +
-  # geom_point(data = rec_locs, aes(x = utm_x, y = utm_y), colour = "red") +
+  geom_point(data = rec_locs, aes(x = utm_x, y = utm_y), colour = "red") +
+  geom_point(data = loc_dat, aes(x = X, y = Y, shape = site), fill = "blue") +
+  scale_shape_manual(values = c(21, 24), guide = NULL)
+depth_plot <- blank_p +
+  geom_raster(data = bath_grid,
+              aes(x = X, y = Y, fill = depth)) +
+  geom_sf(data = coast_utm_bathy) +
   scale_shape_manual(values = c(21, 24), guide = NULL) +
   scale_fill_viridis_c(name = "Depth (m)", direction = -1) 
 slope_plot <- blank_p +
   geom_raster(data = bath_grid, 
               aes(x = X, y = Y, fill = slope)) +
-  geom_sf(data = coast_utm) +
+  geom_sf(data = coast_utm_bathy) +
   scale_fill_viridis_c(name = "Slope\n(degrees)", direction = -1) +
   theme(legend.position = "right",
         axis.text = element_blank())
 dist_plot <- blank_p +
   geom_raster(data = bath_grid, 
               aes(x = X, y = Y, fill = shore_dist_km)) +
-  geom_sf(data = coast_utm) +
+  geom_sf(data = coast_utm_bathy) +
   scale_fill_viridis_c(name = "Distance\nto Coast\n(km)", direction = -1) +
   theme(legend.position = "right",
         axis.text = element_blank())
@@ -626,6 +633,31 @@ png(here::here("figs", "ms_figs_rel", "bathy_preds.png"),
     height = 5, width = 8, res = 250, units = "in")
 bathy_vars
 dev.off()
+
+
+
+
+
+
+
+coast_utm1 <- coast_plotting %>% 
+  sf::st_crop(., 
+              xmin = -127.5, ymin = 46, xmax = -122, ymax = 49.5) %>% 
+  sf::st_transform(., crs = sp::CRS("+proj=utm +zone=10 +units=m"))
+coast_utm2 <- rbind(rnaturalearth::ne_states( "United States of America",
+                                  returnclass = "sf"),
+        rnaturalearth::ne_states( "Canada", returnclass = "sf")) %>%
+  sf::st_crop(., 
+              xmin = -127.5, ymin = 46, xmax = -122, ymax = 49.5) %>% 
+  sf::st_transform(., crs = sp::CRS("+proj=utm +zone=10 +units=m"))
+
+
+blank_p +
+  geom_raster(data = bath_grid, 
+              aes(x = X, y = Y, fill = depth)) +
+  geom_sf(data = coast_utm2) +
+  # geom_label(data = labs_dat, aes(x = X, y = Y, label = lab), size = 3) +
+  scale_fill_viridis_c(name = "Depth (m)", direction = -1) 
 
 
 ## DEPTH PROFILES --------------------------------------------------------------

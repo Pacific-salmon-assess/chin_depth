@@ -52,13 +52,8 @@ interp_stage_dat <- VIM::kNN(stage_dat, k = 5) %>%
 
 # moderately cleaned detections data (includes depth/temperature sensors)
 depth_raw <- readRDS(here::here("data", "detections_all.RDS")) %>%
-  filter(
-    !is.na(depth),
-    depth > 0,
-    # remove stations that are freshwater or terminal
-    !station_name == "LakeWashington",
-    !region == "Fraser"
-  ) %>% 
+  filter(# remove stations that are freshwater or terminal
+         !station_name == "LakeWashington") %>% 
   left_join(., interp_stage_dat %>% dplyr::rename(stage = stage_predicted), 
             by = "vemco_code") %>% 
   left_join(., 
@@ -107,7 +102,9 @@ depth_dets1 <- rbind(depth_raw, depth_h) %>%
       TRUE ~ agg
     )
   ) %>% 
-  filter(!region == "fraser")
+  filter(!region == "fraser",
+         depth > 0,
+         !is.na(depth))
 
 
 ## EXPORT STATIONS -------------------------------------------------------------
@@ -363,13 +360,10 @@ depth_dat <- depth_dets1 %>%
     timestamp_n = -1 * round(as.numeric(timestamp)),
     region_f = fct_relevel(as.factor(region), "swvi",  "nwwa", "jdf", 
                            "swwa", "sog", "puget", "columbia"),
-    # corrections for when depth is above the surface or deeper than max depth
-    # in detection radius
-    depth = ifelse(depth <= 0.05, 0.05, depth),
+    # corrections for when depth deeper than max bathy depth
     depth_diff = max_bathy - depth,
-    # adjust modest errors in depth relative to bathy
-    depth = ifelse(depth_diff > -10 & depth_diff < 0, max_bathy - 0.5, depth),
-    # rel_depth = depth / max_bathy,
+    depth = ifelse(depth_diff > -2.5 & depth_diff < 0, max_bathy - 0.5, depth),
+    # depth_flag2 = ifelse(depth_diff > -2.5 & depth_diff < 0, 1, 0),
     # misc timestamp cleaning
     date_time_local = lubridate::with_tz(date_time, 
                                          tzone = "America/Los_Angeles"),

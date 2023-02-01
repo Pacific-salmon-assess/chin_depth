@@ -1,7 +1,7 @@
-## Fit Quantile Regression Random Forest
+## Fit Regression Random Forest w/ Percentile Intervals
 
 #Model comparison (depth_caret_comparison.R) indicates top model is random 
-#forest with moderate number of trees (1500) and fit to untransformed depth 
+#forest with moderate number of trees and fit to relative depth 
 #data. Fit equivalent model with interpolated training data and generate 
 #quantile prediction intervals.
 # July 8 (fit model with stock as covariate w/ very minimal improvement in 
@@ -441,22 +441,10 @@ yday_cond <- plot_list[[3]] +
   theme(
     axis.title.y = element_blank()
   )
-# slope_cond <- plot_list[[11]] + 
-#   labs(x = "Mean Slope") +
-#   theme(
-#     axis.title.y = element_blank()
-#   )
-# moon_cond <- plot_list[[10]] + 
-#  labs(x = "Proportion of Moon Illuminated") +
-#   theme(
-#     axis.title.y = element_blank()
-#   )
 
 panel1 <- cowplot::plot_grid(
   yday_cond,
   bathy_cond,
-  # slope_cond,
-  # moon_cond, 
   nrow = 1
 )
 
@@ -569,11 +557,17 @@ pred_dat1 <- bath_grid %>%
     fl = mean(bio_dat$fl),
     mean_log_e = mean(bio_dat$mean_log_e)
   ) %>% 
-  left_join(roms_month_means, by = "month") %>% 
+# # add a winter dataset and append
+# pred_dat1_wint <- pred_dat1_summ %>% 
+#   mutate(
+#     local_day = 1
+#   )
+# pred_dat1 <- rbind(pred_dat1_wint, pred_dat1_summ) %>% 
   mutate(
     det_dayx = sin(2 * pi * local_day / 365),
     det_dayy = cos(2 * pi * local_day / 365)
-  )
+  ) %>% 
+  left_join(roms_month_means, by = "month") 
 
 pred_rf1 <- predict(ranger_rf,
                     type = "quantiles",
@@ -608,7 +602,8 @@ rel_depth <- base_plot +
   scale_fill_viridis_c(name = "Bathymetric\nDepth Ratio",
                        direction = -1, 
                        option = "A") +
-  theme(legend.position = "top")
+  theme(legend.position = "top",
+        axis.text = element_blank())
 
 mean_depth <- base_plot +
   geom_raster(data = pred_dat2, 
@@ -625,11 +620,16 @@ var_depth <- base_plot +
   scale_fill_viridis_c(name = "Prediction\nInterval Width", 
                        option = "C",
                        direction = -1)  +
-  theme(legend.position = "top")
+  theme(legend.position = "top",
+        axis.text = element_blank())
 
-avg_depth <- cowplot::plot_grid(rel_depth, mean_depth, var_depth, ncol = 3)
+avg_depth1 <- cowplot::plot_grid(plotlist = list(rel_depth, var_depth),
+                                 ncol = 1)
+avg_depth <- cowplot::plot_grid(plotlist = list(mean_depth, avg_depth1),
+                                ncol = 2,
+                                rel_widths = c(1.5, 1))
 
-png(here::here("figs", "ms_figs_rel", "avg_depth.png"), height = 5, width = 8, 
+png(here::here("figs", "ms_figs_rel", "avg_depth.png"), height = 5.5, width = 7, 
     units = "in", res = 250)
 avg_depth
 dev.off()
@@ -686,8 +686,7 @@ pred_tbl <- tibble(
           left_join(., stage_dat %>% select(-stage), by = "stage_mature") %>%
           left_join(., roms_month_means, by = "month")
       }
-      )
-    ,
+      ),
     # generate predictions
     preds = purrr::map(pred_grid, function (x) {
       pred_rf <- predict(ranger_rf, 
@@ -717,6 +716,65 @@ pred_dat <- pred_tbl %>%
          preds) %>% 
   unnest(cols = preds)
 
+
+## Show raw differences between plots
+season_map_abs <- base_plot +
+  geom_raster(data = pred_dat %>% 
+                filter(contrast == "season"), 
+              aes(x = utm_x_m, y = utm_y_m, fill = pred_med)) +
+  geom_sf(data = coast_utm) +
+  scale_fill_viridis_c(name = "Mean Depth", direction = -1) +
+  labs(title = "Season Effects") +
+  facet_wrap(~season)
+
+mat_names <- c(
+  `0` = "Immature",
+  `1` = "Mature"
+)
+mat_map_abs <- base_plot +
+  geom_raster(data = pred_dat %>% 
+                filter(contrast == "maturity"), 
+              aes(x = utm_x_m, y = utm_y_m, fill = pred_med)) +
+  geom_sf(data = coast_utm) +
+  scale_fill_viridis_c(name = "Mean Depth", direction = -1) +
+  labs(title = "Life Stage Effects") +
+  facet_wrap(~stage_mature,
+             labeller = as_labeller(mat_names))
+
+moon_map_abs <- base_plot +
+  geom_raster(data = pred_dat %>% 
+                filter(contrast == "moon light"), 
+              aes(x = utm_x_m, y = utm_y_m, fill = pred_med)) +
+  geom_sf(data = coast_utm) +
+  scale_fill_viridis_c(name = "Mean Depth", direction = -1) +
+  labs(title = "Lunar Illumination") +
+  facet_wrap(~moon_illuminated)
+
+dn_names <- c(
+  `0` = "Day",
+  `1` = "Night"
+)
+dvm_map_abs <- base_plot +
+  geom_raster(data = pred_dat %>% 
+                filter(contrast == "dvm"), 
+              aes(x = utm_x_m, y = utm_y_m, fill = pred_med)) +
+  geom_sf(data = coast_utm) +
+  scale_fill_viridis_c(name = "Mean Depth", direction = -1) +
+  labs(title = "Diel Vertical Migration") +
+  facet_wrap(~day_night_night,
+             labeller = as_labeller(dn_names))
+
+png(here::here("figs", "ms_figs_rel", "contrast_map_abs.png"), 
+    height = 5.5, width = 5, 
+    units = "in", res = 250)
+cowplot::plot_grid(
+  plotlist = list(season_map_abs, mat_map_abs#, moon_map_abs, dvm_map_abs
+                  ),
+  ncol = 1)
+dev.off()
+
+
+## Show relative differences 
 
 # calculate differences for each contrast scenario (NOTE: estimates unaffected
 # by whether real or scaled predictions are used)

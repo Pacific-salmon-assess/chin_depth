@@ -92,21 +92,21 @@ train_depth_baked <- prep(depth_recipe) %>%
          dplyr::select(-ind_block, -max_bathy))
 
 # pull model attributes from top ranger
-rf_list <- readRDS(here::here("data", "model_fits", "rf_model_comparison.rds"))
-top_mod <- rf_list[[2]]$top_model
-
-ranger_rf <- ranger::ranger(
-  depth ~ .,
-  data = train_depth_baked,
-  num.trees = top_mod$param$num.trees,
-  mtry = top_mod$tuneValue$mtry,
-  keep.inbag = TRUE,
-  quantreg = TRUE,
-  importance = "permutation"
-)
-
-saveRDS(ranger_rf,
-        here::here("data", "model_fits", "relative_rf_ranger.rds"))
+# rf_list <- readRDS(here::here("data", "model_fits", "rf_model_comparison.rds"))
+# top_mod <- rf_list[[2]]$top_model
+# 
+# ranger_rf <- ranger::ranger(
+#   depth ~ .,
+#   data = train_depth_baked,
+#   num.trees = top_mod$param$num.trees,
+#   mtry = top_mod$tuneValue$mtry,
+#   keep.inbag = TRUE,
+#   quantreg = TRUE,
+#   importance = "permutation"
+# )
+# 
+# saveRDS(ranger_rf,
+#         here::here("data", "model_fits", "relative_rf_ranger.rds"))
 ranger_rf <- readRDS(here::here("data", "model_fits", "relative_rf_ranger.rds"))
 
 
@@ -228,312 +228,6 @@ dev.off()
 #   rename(Importance = value)
 
 
-# COUNTERFACTUAL PREDICT -------------------------------------------------------
-
-# generate predictions for maturity stage and different counterfacs (e.g. 
-# most important 4 variables)
-
-# currently grouped by location, but consider removing and refocusing on mean
-# utm
-
-new_dat <- 
-#   data.frame(
-#     # points representing Ucluelet and JdF
-#     site = c("JdF", "Ucluelet", "Columbia", "Gulf Islands"),
-#     lat = c(48.31192, 48.95233, 46.4454, 48.48166),
-#     lon = c(-124.08385, -125.7803, -124.1587, -123.19792) 
-#   )
-# new_dat <- sdmTMB::add_utm_columns(
-#   new_dat, 
-#   ll_names = c("lon", "lat"),
-#   utm_names = c("utm_x", "utm_y"),
-#   units = "km"
-# )
-# new_dat <- new_dat %>% 
-  data.frame(
-    fl = mean(train_depth_baked$fl),
-    mean_log_e = mean(train_depth_baked$mean_log_e),
-    mean_bathy = mean(train_depth_baked$mean_bathy),
-    utm_x = mean(train_depth_baked$utm_x),
-    local_day = mean(depth_dat_raw$local_day),
-    utm_y = mean(train_depth_baked$utm_y),
-    mean_slope = mean(train_depth_baked$mean_slope),
-    shore_dist = mean(train_depth_baked$shore_dist),
-    u = mean(train_depth_baked$u),
-    v = mean(train_depth_baked$v),
-    w = mean(train_depth_baked$w),
-    zoo = mean(train_depth_baked$zoo),
-    oxygen = mean(train_depth_baked$oxygen),
-    thermo_depth = mean(train_depth_baked$thermo_depth),
-    roms_temp = mean(train_depth_baked$roms_temp),
-    moon_illuminated = mean(train_depth_baked$moon_illuminated),
-    day_night_night = 0.5,
-    stage_mature = 0.5
-  ) %>% 
-  #duplicate 100 times
-  as_tibble() %>% 
-  slice(rep(1:n(), each = 100))
-
-
-# make tibble for different counterfacs
-gen_pred_dat <- function(var_in) {
-  # necessary to deal with string input
-  varname <- ensym(var_in)
-  group_vals <- depth_dat_raw %>% 
-      dplyr::summarize(min_v = min(!!varname),
-                       max_v = max(!!varname))
-  # change to dataframe
-  var_seq <- NULL
-  for (i in 1:nrow(group_vals)) {
-      var_seq <- c(var_seq, 
-                   seq(group_vals$min_v[i], group_vals$max_v[i], 
-                       length.out = 100))
-  }
-  # var_seq2 <- rep(var_seq, times = length(unique(new_dat$site)))
-  var_seq2 <- var_seq
-  new_dat %>% 
-    select(- {{ var_in }}) %>% 
-    mutate(dum = var_seq2) %>% 
-    dplyr::rename(!!varname := dum) %>% 
-    mutate(
-      det_dayx = sin(2 * pi * local_day / 365),
-      det_dayy = cos(2 * pi * local_day / 365)
-    )
-}
-
-
-# predictions function
-pred_foo <- function(preds_in, ...) {
-  preds1 <- predict(
-    ranger_rf, 
-    data = preds_in,
-    ...
-  )
-  
-  if (is.null(preds1$se)) {
-    preds_out <- preds1$predictions
-    colnames(preds_out) <- c("lo", "mean", "up")
-  }
-  if (!is.null(preds1$se)) {
-    preds_out <- cbind(
-      preds1$predictions,
-      preds1$se
-    )
-    colnames(preds_out) <- c("mean", "se")
-  }
-  
-  cbind(preds_in, preds_out) %>%
-    mutate(
-      lo = -1 * lo, #(mean + (qnorm(0.025) * se)),
-      up = -1 * up, #(mean + (qnorm(0.975) * se)),
-      mean = -1 * mean
-    )
-}
-
-
-counterfac_tbl <- tibble(
-  var_in = c("mean_bathy", "fl", "utm_x", "utm_y",
-    "local_day", "mean_log_e", "thermo_depth",
-    "roms_temp", "zoo", "oxygen", "shore_dist",
-    "moon_illuminated", "mean_slope"
-             )) %>% 
-  mutate(
-    pred_dat_in = purrr::map(var_in, 
-                             gen_pred_dat),
-    preds = purrr::map(pred_dat_in, 
-                       pred_foo, 
-                       type = "quantiles")
-  )
-
-# plotting function
-plot_foo <- function (data, ...) {
-  ggplot(data, mapping = aes(!!!ensyms(...))) +
-    geom_line(aes(y = mean)) +
-    geom_ribbon(aes(ymin = lo, ymax = up), alpha = 0.4) +
-    ggsidekick::theme_sleek() +
-    scale_x_continuous(expand = c(0, 0)) +
-    scale_y_continuous(breaks = c(0, -0.25, -0.5, -0.75, -1.0),
-                       labels = c("0", "0.25", "0.5", "0.75", "1.0"),
-                       limits = c(-1, 0))
-}
-
-
-## cleaned up versions for manuscript main text
-# calculate overall depth range for y axis
-bathy_preds <- counterfac_tbl %>% 
-  filter(var_in == "mean_bathy")
-bathy_cond <- plot_foo(data = bathy_preds$preds[[1]], x = "mean_bathy") + 
-  labs(x = "Mean Bathymetry Depth") +
-  theme(
-    axis.title.y = element_blank()
-  )
-yday_preds <- counterfac_tbl %>% 
-  filter(var_in == "local_day")
-yday_cond <- plot_foo(data = yday_preds$preds[[1]], x = "local_day") +  
-  labs(x = "Year Day") +
-  theme(
-    axis.title.y = element_blank()
-  )
-
-
-panel1 <- cowplot::plot_grid(
-  yday_cond,
-  bathy_cond,
-  nrow = 1
-)
-
-y_grob <- grid::textGrob("Predicted Bathymetric\nDepth Ratio", rot = 90)
-
-png(here::here("figs", "ms_figs_rel", "counterfac_effects.png"),
-    height = 2.5, width = 5.25, 
-    units = "in", res = 250)
-gridExtra::grid.arrange(
-  gridExtra::arrangeGrob(
-    panel1, left = y_grob)
-)
-dev.off()
-
-
-utmx_preds <- counterfac_tbl %>% 
-  filter(var_in == "utm_x")
-utmx_cond <- plot_foo(data = utmx_preds$preds[[1]], x = "utm_x") +  
-  labs(x = "Easting") +
-  theme(
-    axis.title.y = element_blank()
-  )
-utmy_preds <- counterfac_tbl %>% 
-  filter(var_in == "utm_y")
-utmy_cond <- plot_foo(data = utmy_preds$preds[[1]], x = "utm_y") +  
-  labs(x = "Northing") +
-  theme(
-    axis.title.y = element_blank()
-  )
-
-png(here::here("figs", "ms_figs_rel", "counterfac_utms.png"),
-    height = 2.5, width = 5.25, 
-    units = "in", res = 250)
-cowplot::plot_grid(
-  utmx_cond,
-  utmy_cond,
-  nrow = 1
-)
-dev.off()
-
-
-## unable to run as purrr:: or loop since update to ggplot
-# plot_list <- vector(length = nrow(counterfac_tbl), mode = "list")
-# for (i in 1:nrow(counterfac_tbl)) {
-#   plot_list[[i]] <- plot_foo(counterfac_tbl$preds[[i]],
-#                              x = "mean_bathy")#counterfac_tbl$var_in[[i]])  
-# }
-
-# pdf for region specific relationships
-# pdf(here::here("figs", "ms_figs_rel", "bathy_counterfac_region.pdf"),
-#     height = 6, width = 8)
-# ggplot(counterfac_tbl$preds[[1]], aes(x = mean_bathy, colour = site)) +
-#   geom_line(aes(y = mean)) +
-#   geom_ribbon(aes(ymin = lo, ymax = up, fill = site), alpha = 0.2) +
-#   ggsidekick::theme_sleek() +
-#   scale_x_continuous(expand = c(0, 0)) +
-#   facet_wrap(~site)
-# dev.off()
-
-
-## categorical predictions for day/night and maturity impacts
-# new_dat_trim <- new_dat[1:2, ] %>% 
-#   mutate(
-#     det_dayx = sin(2 * pi * local_day / 365),
-#     det_dayy = cos(2 * pi * local_day / 365)
-#   ) 
-# mat_dat <- new_dat_trim %>%  
-#   mutate(
-#     stage_mature = c(0, 1),
-#     stage = factor(stage_mature, labels = c("immature", "mature"))
-#   ) %>% 
-#   pred_foo(., 
-#            type = "quantiles") %>% 
-#   mutate(
-#     lo = -1 * lo, #(mean + (qnorm(0.025) * se)),
-#     up = -1 * up, #(mean + (qnorm(0.975) * se)),
-#     mean = -1 * mean
-#   ) 
-# 
-# mat_plot <- ggplot(mat_dat, aes(x = stage)) +
-#   geom_pointrange(aes(y = mean, ymin = lo, ymax = up)) +
-#   ggsidekick::theme_sleek() +
-#   labs(title = "Maturity Counterfactual") +
-#   scale_y_continuous(breaks = c(0, -0.25, -0.5, -0.75, -1.0),
-#                      labels = c("0", "0.25", "0.5", "0.75", "1.0"),
-#                      limits = c(-1, 0))
-# 
-# dn_plot <- new_dat_trim %>% 
-#   mutate(
-#     day_night_night = c(0, 1)
-#   ) %>% 
-#   pred_foo(., 
-#            type = "quantiles") %>% 
-#   mutate(
-#     lo = -1 * lo, #(mean + (qnorm(0.025) * se)),
-#     up = -1 * up, #(mean + (qnorm(0.975) * se)),
-#     mean = -1 * mean
-#   ) %>% 
-#   ggplot(., aes(x = as.factor(day_night_night))) +
-#   geom_pointrange(aes(y = mean, ymin = lo, ymax = up)) +
-#   ggsidekick::theme_sleek() +
-#   labs(title = "Day/Night Counterfactual") +
-#   scale_y_continuous(breaks = c(0, -0.25, -0.5, -0.75, -1.0),
-#                      labels = c("0", "0.25", "0.5", "0.75", "1.0"),
-#                      limits = c(-1, 0))
-# 
-# 
-# pdf(here::here("figs", "ms_figs_rel", "counterfactual_ranger.pdf"),
-#     height = 6, width = 8)
-# plot_list
-# mat_plot
-# dn_plot
-# dev.off()
-# 
-
-
-# BATHY VS YEAR DAY ------------------------------------------------------------
-
-# explore how relative depth changes across year-day and bathymetry
-new_dat_by <- expand.grid(
-  local_day = seq(1, 365, by = 5),
-  mean_bathy = seq(1, 365, by = 5)  
-) %>% 
-  mutate(
-    fl = mean(train_depth_baked$fl),
-    mean_log_e = mean(train_depth_baked$mean_log_e),
-    utm_x = mean(train_depth_baked$utm_x),
-    utm_y = mean(train_depth_baked$utm_y),
-    mean_slope = mean(train_depth_baked$mean_slope),
-    shore_dist = mean(train_depth_baked$shore_dist),
-    u = mean(train_depth_baked$u),
-    v = mean(train_depth_baked$v),
-    w = mean(train_depth_baked$w),
-    zoo = mean(train_depth_baked$zoo),
-    oxygen = mean(train_depth_baked$oxygen),
-    thermo_depth = mean(train_depth_baked$thermo_depth),
-    roms_temp = mean(train_depth_baked$roms_temp),
-    moon_illuminated = mean(train_depth_baked$moon_illuminated),
-    day_night_night = 0.5,
-    stage_mature = 0.5,
-    det_dayx = sin(2 * pi * local_day / 365),
-    det_dayy = cos(2 * pi * local_day / 365)
-  )
-
-pred_by <- pred_foo(preds_in = new_dat_by,  
-                    type = "quantiles")
-
-pdf(here::here("figs", "ms_figs_rel", "bathy_yearday_heatmap.pdf"),
-    height = 5, width = 6)
-ggplot(pred_by) +
-  geom_raster(aes(x = local_day, y = mean_bathy, fill = mean)) +
-  ggsidekick::theme_sleek() 
-dev.off()
-
-
 # SPATIAL PREDICT --------------------------------------------------------------
 
 coast_utm <- rbind(rnaturalearth::ne_states( "United States of America", 
@@ -556,6 +250,15 @@ bath_grid <- bath_grid_in %>%
 
 ggplot(bath_grid) +
   geom_raster(aes(x = utm_x, y = utm_y, fill = mean_bathy))
+
+
+# base template plot for maps
+base_plot <- ggplot() + 
+  ggsidekick::theme_sleek() +
+  theme(axis.title = element_blank()) +
+  scale_x_continuous(expand = c(0, 0)) +
+  scale_y_continuous(expand = c(0, 0))
+
 
 # calculate mean roms_variables for different seasons (using monthly averages)
 roms_month_means <- readRDS(here::here("data", "depth_dat_nobin.RDS")) %>% 
@@ -624,11 +327,6 @@ pred_dat2 <- pred_dat1 %>%
   ) %>% 
   filter(mean_bathy < 400)
 
-base_plot <- ggplot() + 
-  ggsidekick::theme_sleek() +
-  theme(axis.title = element_blank()) +
-  scale_x_continuous(expand = c(0, 0)) +
-  scale_y_continuous(expand = c(0, 0))
   
 rel_depth <- base_plot +
   geom_raster(data = pred_dat2, 
@@ -930,7 +628,7 @@ pred_latent <- pred_dat1 %>%
   mutate(
     mean_bathy = mean(mean_bathy),
     mean_slope = mean(mean_slope),
-    shore_distZ mean(shore_dist)
+    shore_dist = mean(shore_dist)
   )
 
 pred_latent_rf <- predict(ranger_rf,
@@ -952,21 +650,15 @@ pred_latent2 <- pred_latent %>%
     utm_y_m = utm_y * 1000,
     pred_int_width = pred_up - pred_lo
   ) 
-zZrel_latent <- base_plot +
+
+# plot that is added to counterfac panel below
+rel_latent <- base_plot +
   geom_raster(data = pred_latent2, 
               aes(x = utm_x_m, y = utm_y_m, fill = rel_pred_med)) +
   geom_sf(data = coast_utm) +
   scale_fill_viridis_c(name = "Bathymetric\nDepth Ratio",
                        direction = -1, 
-                       option = "A") +
-  theme(legend.position = "top",
-        axis.text = element_blank())
-
-png(here::here("figs", "ms_figs_rel", "latent_counterfac.png"),
-    height = 2.5, width = 2.5, 
-    units = "in", res = 250)
-rel_latent
-dev.off()
+                       option = "A") 
 
 # mean_latent <- base_plot +
 #   geom_raster(data = pred_latent2, 
@@ -975,3 +667,382 @@ dev.off()
 #   scale_fill_viridis_c(name = "Mean Depth",
 #                        direction = -1) +
 #   theme(legend.position = "top")
+
+
+# COUNTERFACTUAL PREDICT -------------------------------------------------------
+
+# generate predictions for maturity stage and different counterfacs (e.g. 
+# most important 4 variables)
+
+# currently grouped by location, but consider removing and refocusing on mean
+# utm
+
+new_dat <- 
+  data.frame(
+    # points representing Ucluelet and JdF
+    site = c("JdF", "Ucluelet", "Columbia", "Gulf Islands"),
+    lat = c(48.31192, 48.95233, 46.4454, 48.48166),
+    lon = c(-124.08385, -125.7803, -124.1587, -123.19792)
+  )
+new_dat <- sdmTMB::add_utm_columns(
+  new_dat,
+  ll_names = c("lon", "lat"),
+  utm_names = c("utm_x", "utm_y"),
+  units = "km"
+)
+new_dat <- new_dat %>%
+  #data.frame(
+  # utm_x = mean(train_depth_baked$utm_x),
+  # utm_y = mean(train_depth_baked$utm_y),
+  mutate(
+    fl = mean(train_depth_baked$fl),
+    mean_log_e = mean(train_depth_baked$mean_log_e),
+    mean_bathy = mean(train_depth_baked$mean_bathy),
+    local_day = mean(depth_dat_raw$local_day),
+    mean_slope = mean(train_depth_baked$mean_slope),
+    shore_dist = mean(train_depth_baked$shore_dist),
+    u = mean(train_depth_baked$u),
+    v = mean(train_depth_baked$v),
+    w = mean(train_depth_baked$w),
+    zoo = mean(train_depth_baked$zoo),
+    oxygen = mean(train_depth_baked$oxygen),
+    thermo_depth = mean(train_depth_baked$thermo_depth),
+    roms_temp = mean(train_depth_baked$roms_temp),
+    moon_illuminated = mean(train_depth_baked$moon_illuminated),
+    day_night_night = 0.5,
+    stage_mature = 0.5
+  ) %>% 
+  #duplicate 100 times
+  as_tibble() %>% 
+  slice(rep(1:n(), each = 100))
+
+
+# make tibble for different counterfacs
+gen_pred_dat <- function(var_in) {
+  # necessary to deal with string input
+  varname <- ensym(var_in)
+  group_vals <- depth_dat_raw %>% 
+    dplyr::summarize(min_v = min(!!varname),
+                     max_v = max(!!varname))
+  # change to dataframe
+  var_seq <- NULL
+  for (i in 1:nrow(group_vals)) {
+    var_seq <- c(var_seq, 
+                 seq(group_vals$min_v[i], group_vals$max_v[i], 
+                     length.out = 100))
+  }
+  var_seq2 <- rep(var_seq, times = length(unique(new_dat$site)))
+  # var_seq2 <- var_seq
+  new_dat %>% 
+    select(- {{ var_in }}) %>% 
+    mutate(dum = var_seq2) %>% 
+    dplyr::rename(!!varname := dum) %>% 
+    mutate(
+      det_dayx = sin(2 * pi * local_day / 365),
+      det_dayy = cos(2 * pi * local_day / 365)
+    )
+}
+
+
+# predictions function
+pred_foo <- function(preds_in, ...) {
+  preds1 <- predict(
+    ranger_rf, 
+    data = preds_in,
+    ...
+  )
+  
+  if (is.null(preds1$se)) {
+    preds_out <- preds1$predictions
+    colnames(preds_out) <- c("lo", "med", "up")
+    dum <- cbind(preds_in, preds_out) %>% 
+      mutate(med = -1 * med)
+  }
+  if (!is.null(preds1$se)) {
+    preds_out <- cbind(
+      preds1$predictions,
+      preds1$se
+    ) 
+    colnames(preds_out) <- c("mean", "se")
+    dum <- cbind(preds_in, preds_out) %>%
+      mutate(
+        lo = mean + (qnorm(0.025) * se),
+        up = mean + (qnorm(0.975) * se), 
+        mean = -1 * mean
+      )
+  }
+  
+  dum %>%
+    mutate(
+      lo = -1 * lo, 
+      up = -1 * up
+    )
+}
+
+
+# counterfac_tbl <- tibble(
+#   var_in = c("mean_bathy", "fl", "utm_x", "utm_y",
+#              "local_day", "mean_log_e", "thermo_depth",
+#              "roms_temp", "zoo", "oxygen", "shore_dist",
+#              "moon_illuminated", "mean_slope"
+#   )) %>% 
+#   mutate(
+#     pred_dat_in = purrr::map(var_in, 
+#                              gen_pred_dat),
+#     # preds = purrr::map(pred_dat_in, 
+#     #                    pred_foo, 
+#     #                    type = "quantiles",
+#     #                    quantiles = c(0.1, 0.5, 0.9)),
+#     preds_ci = purrr::map(pred_dat_in, 
+#                           pred_foo, 
+#                           type = "se",
+#                           se.method = "infjack")
+#   )
+# saveRDS(counterfac_tbl,
+#         here::here("data", "counterfac_preds_ci.rds"))
+counterfac_tbl <- readRDS(here::here("data", "counterfac_preds_ci.rds"))
+
+
+## practice fig with both interval types
+# calculate overall depth range for y axis
+# bathy_preds <- counterfac_tbl %>% 
+#   filter(var_in == "mean_bathy") %>% 
+#   pull(preds) %>% 
+#   as.data.frame() %>% 
+#   select(
+#     site, mean_bathy, lo, mean, up,
+#   ) %>% 
+#   mutate(
+#     interval = "pred"
+#   )
+# 
+# bathy_preds2 <- counterfac_tbl %>% 
+#   filter(var_in == "mean_bathy") %>% 
+#   pull(preds_ci) %>% 
+#   as.data.frame() %>% 
+#   select(
+#     site, mean_bathy, lo, mean, up,
+#   ) %>% 
+#   mutate(
+#     interval = "ci"
+#   ) %>% 
+#   rbind(., bathy_preds)
+# 
+# alpha_pal <- c(0.2, 0.4)
+# names(alpha_pal) <- c("pred", "ci")
+# ggplot(bathy_preds2 %>% filter(interval == "ci"), aes(x = mean_bathy)) +
+#   geom_line(aes(y = mean)) +
+#   geom_ribbon(aes(ymin = lo, ymax = up, alpha = interval)) +
+#   scale_alpha_manual(values = alpha_pal) +
+#   ggsidekick::theme_sleek() +
+#   scale_x_continuous(expand = c(0, 0)) +
+#   scale_y_continuous(breaks = c(0, -0.25, -0.5, -0.75, -1.0),
+#                      labels = c("0", "0.25", "0.5", "0.75", "1.0"),
+#                      limits = c(-1, 0)) +
+#   facet_wrap(~site)
+
+
+
+# plotting function
+plot_foo <- function (data, ...) {
+  ggplot(data, mapping = aes(!!!ensyms(...))) +
+    geom_line(aes(y = mean#, color = site
+                  )) +
+    geom_ribbon(aes(ymin = lo, ymax = up#, fill = site
+                    ), alpha = 0.4) +
+    ggsidekick::theme_sleek() +
+    scale_x_continuous(expand = c(0, 0)) +
+    scale_y_continuous(breaks = c(0, -0.25, -0.5, -0.75, -1.0),
+                       labels = c("0", "0.25", "0.5", "0.75", "1.0"),
+                       limits = c(-1, 0))# + 
+    # facet_wrap(~site)
+}
+
+
+bathy_cond <- counterfac_tbl %>% 
+  filter(var_in == "mean_bathy") %>% 
+  pull(preds_ci) %>% 
+  as.data.frame() %>% 
+  filter(site == "JdF") %>% 
+  plot_foo(data = .,
+           x = "mean_bathy") +  
+  labs(x = "Mean Bottom Depth") +
+  theme(
+    axis.title.y = element_blank()
+  ) 
+
+yday_cond <- counterfac_tbl %>% 
+  filter(var_in == "local_day") %>% 
+  pull(preds_ci) %>% 
+  as.data.frame() %>% 
+  filter(site == "JdF") %>% 
+  plot_foo(data = .,
+           x = "local_day") +  
+  labs(x = "Year Day") +
+  theme(
+    axis.title.y = element_blank()
+  ) 
+
+
+panel1 <- cowplot::plot_grid(
+  yday_cond,
+  bathy_cond,
+  nrow = 1
+)
+pp <- gridExtra::grid.arrange(
+  gridExtra::arrangeGrob(
+    panel1, 
+    left = grid::textGrob("Predicted Bathymetric\nDepth Ratio", rot = 90)
+  )
+)
+
+png(here::here("figs", "ms_figs_rel", "counterfac_effects.png"),
+    height = 5.5, width = 5.25, 
+    units = "in", res = 250)
+cowplot::plot_grid(
+  pp,
+  rel_latent,
+  nrow = 2
+) 
+dev.off()
+
+
+utmx_preds <- counterfac_tbl %>% 
+  filter(var_in == "utm_x")
+utmx_cond <- plot_foo(data = utmx_preds$preds[[1]], x = "utm_x") +  
+  labs(x = "Easting") +
+  theme(
+    axis.title.y = element_blank()
+  )
+utmy_preds <- counterfac_tbl %>% 
+  filter(var_in == "utm_y")
+utmy_cond <- plot_foo(data = utmy_preds$preds[[1]], x = "utm_y") +  
+  labs(x = "Northing") +
+  theme(
+    axis.title.y = element_blank()
+  )
+
+png(here::here("figs", "ms_figs_rel", "counterfac_utms.png"),
+    height = 2.5, width = 5.25, 
+    units = "in", res = 250)
+cowplot::plot_grid(
+  utmx_cond,
+  utmy_cond,
+  nrow = 1
+)
+dev.off()
+
+
+## unable to run as purrr:: or loop since update to ggplot
+# plot_list <- vector(length = nrow(counterfac_tbl), mode = "list")
+# for (i in 1:nrow(counterfac_tbl)) {
+#   plot_list[[i]] <- plot_foo(counterfac_tbl$preds[[i]],
+#                              x = "mean_bathy")#counterfac_tbl$var_in[[i]])  
+# }
+
+# pdf for region specific relationships
+# pdf(here::here("figs", "ms_figs_rel", "bathy_counterfac_region.pdf"),
+#     height = 6, width = 8)
+# ggplot(counterfac_tbl$preds[[1]], aes(x = mean_bathy, colour = site)) +
+#   geom_line(aes(y = mean)) +
+#   geom_ribbon(aes(ymin = lo, ymax = up, fill = site), alpha = 0.2) +
+#   ggsidekick::theme_sleek() +
+#   scale_x_continuous(expand = c(0, 0)) +
+#   facet_wrap(~site)
+# dev.off()
+
+
+## categorical predictions for day/night and maturity impacts
+# new_dat_trim <- new_dat[1:2, ] %>% 
+#   mutate(
+#     det_dayx = sin(2 * pi * local_day / 365),
+#     det_dayy = cos(2 * pi * local_day / 365)
+#   ) 
+# mat_dat <- new_dat_trim %>%  
+#   mutate(
+#     stage_mature = c(0, 1),
+#     stage = factor(stage_mature, labels = c("immature", "mature"))
+#   ) %>% 
+#   pred_foo(., 
+#            type = "quantiles") %>% 
+#   mutate(
+#     lo = -1 * lo, #(mean + (qnorm(0.025) * se)),
+#     up = -1 * up, #(mean + (qnorm(0.975) * se)),
+#     mean = -1 * mean
+#   ) 
+# 
+# mat_plot <- ggplot(mat_dat, aes(x = stage)) +
+#   geom_pointrange(aes(y = mean, ymin = lo, ymax = up)) +
+#   ggsidekick::theme_sleek() +
+#   labs(title = "Maturity Counterfactual") +
+#   scale_y_continuous(breaks = c(0, -0.25, -0.5, -0.75, -1.0),
+#                      labels = c("0", "0.25", "0.5", "0.75", "1.0"),
+#                      limits = c(-1, 0))
+# 
+# dn_plot <- new_dat_trim %>% 
+#   mutate(
+#     day_night_night = c(0, 1)
+#   ) %>% 
+#   pred_foo(., 
+#            type = "quantiles") %>% 
+#   mutate(
+#     lo = -1 * lo, #(mean + (qnorm(0.025) * se)),
+#     up = -1 * up, #(mean + (qnorm(0.975) * se)),
+#     mean = -1 * mean
+#   ) %>% 
+#   ggplot(., aes(x = as.factor(day_night_night))) +
+#   geom_pointrange(aes(y = mean, ymin = lo, ymax = up)) +
+#   ggsidekick::theme_sleek() +
+#   labs(title = "Day/Night Counterfactual") +
+#   scale_y_continuous(breaks = c(0, -0.25, -0.5, -0.75, -1.0),
+#                      labels = c("0", "0.25", "0.5", "0.75", "1.0"),
+#                      limits = c(-1, 0))
+# 
+# 
+# pdf(here::here("figs", "ms_figs_rel", "counterfactual_ranger.pdf"),
+#     height = 6, width = 8)
+# plot_list
+# mat_plot
+# dn_plot
+# dev.off()
+# 
+
+
+# BATHY VS YEAR DAY ------------------------------------------------------------
+
+# explore how relative depth changes across year-day and bathymetry
+new_dat_by <- expand.grid(
+  local_day = seq(1, 365, by = 5),
+  mean_bathy = seq(1, 365, by = 5)  
+) %>% 
+  mutate(
+    fl = mean(train_depth_baked$fl),
+    mean_log_e = mean(train_depth_baked$mean_log_e),
+    utm_x = mean(train_depth_baked$utm_x),
+    utm_y = mean(train_depth_baked$utm_y),
+    mean_slope = mean(train_depth_baked$mean_slope),
+    shore_dist = mean(train_depth_baked$shore_dist),
+    u = mean(train_depth_baked$u),
+    v = mean(train_depth_baked$v),
+    w = mean(train_depth_baked$w),
+    zoo = mean(train_depth_baked$zoo),
+    oxygen = mean(train_depth_baked$oxygen),
+    thermo_depth = mean(train_depth_baked$thermo_depth),
+    roms_temp = mean(train_depth_baked$roms_temp),
+    moon_illuminated = mean(train_depth_baked$moon_illuminated),
+    day_night_night = 0.5,
+    stage_mature = 0.5,
+    det_dayx = sin(2 * pi * local_day / 365),
+    det_dayy = cos(2 * pi * local_day / 365)
+  )
+
+pred_by <- pred_foo(preds_in = new_dat_by,  
+                    type = "quantiles")
+
+pdf(here::here("figs", "ms_figs_rel", "bathy_yearday_heatmap.pdf"),
+    height = 5, width = 6)
+ggplot(pred_by) +
+  geom_raster(aes(x = local_day, y = mean_bathy, fill = mean)) +
+  ggsidekick::theme_sleek() 
+dev.off()
+

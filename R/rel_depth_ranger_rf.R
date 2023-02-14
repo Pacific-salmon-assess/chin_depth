@@ -897,7 +897,7 @@ pp <- gridExtra::grid.arrange(
 )
 
 png(here::here("figs", "ms_figs_rel", "counterfac_effects.png"),
-    height = 5.5, width = 5.25, 
+    height = 5.5, width = 5.5, 
     units = "in", res = 250)
 cowplot::plot_grid(
   pp,

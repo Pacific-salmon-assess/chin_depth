@@ -186,21 +186,38 @@ temp_dat <- read.csv(
 
 # calculate thermocline depth at each station
 thermo_dat<- temp_dat %>% 
-  group_by(unique_id, lat, lon, timestamp) %>% 
+  group_by(unique_id, lat, lon, timestamp, region) %>% 
   summarize(
     thermo_depth = rLakeAnalyzer::thermo.depth(wtr = value, depths = depth),
     .groups = "drop"
-  )
+  ) %>% 
+  group_by(region) %>% 
+  mutate(median_thermo = median(thermo_depth, na.rm = TRUE)) %>% 
+  ungroup()
 
+pdf(here::here("figs", "thermocline_depth.pdf"))
+ggplot(thermo_dat %>% filter(!is.na(thermo_depth))) +
+  geom_histogram(aes(x = thermo_depth)) +
+  geom_vline(aes(xintercept = median_thermo), colour = "red") +
+  facet_wrap(~region) +
+  ggsidekick::theme_sleek()
+dev.off()
 
 
 # visualize
 # missed_dat <- thermo_dat %>% filter(is.na(thermo_depth))
 # ids <- sample(unique(thermo_dat$unique_id), 5)
-# ggplot(temp_dat %>% 
-#          filter(unique_id %in% c("207", "213", "241", "478"))) +
-#   geom_point(aes(x = value, y = (-1 * depth), colour = as.factor(date))) #+
-  # geom_hline(aes(yintercept = -1 * thermo_depth, colour = as.factor(date)))
+# temp_dat %>%
+#   filter(unique_id %in% ids) %>% 
+#   group_by(unique_id, lat, lon, timestamp, region) %>% 
+#   mutate(
+#     thermo_depth = rLakeAnalyzer::thermo.depth(wtr = value, depths = depth),
+#     .groups = "drop"
+#   ) %>% 
+#   ggplot(.) +
+#   geom_point(aes(x = value, y = (-1 * depth), colour = region)) +
+#   geom_hline(aes(yintercept = -1 * thermo_depth)) +
+#   facet_wrap(~unique_id)
 
 
 ## IMPORT ROMS PULL ------------------------------------------------------------

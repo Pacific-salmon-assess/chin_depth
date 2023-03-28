@@ -181,7 +181,8 @@ temp_dat <- read.csv(
       as.POSIXct(., form = "%d-%m-%Y %H:%M") %>%
       difftime(time1, timestamp) %>% 
       as.numeric()
-  ) 
+  ) %>% 
+  filter(!depth < 0)
 
 # calculate thermocline depth at each station
 thermo_dat<- temp_dat %>% 
@@ -190,6 +191,8 @@ thermo_dat<- temp_dat %>%
     thermo_depth = rLakeAnalyzer::thermo.depth(wtr = value, depths = depth),
     .groups = "drop"
   )
+
+
 
 # visualize
 # missed_dat <- thermo_dat %>% filter(is.na(thermo_depth))

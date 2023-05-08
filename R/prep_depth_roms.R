@@ -2,6 +2,7 @@
 ## Export stations for query, then import and evaluate 
 ## Query conducted by Doug Jackson (doug@qedaconsulting.com)
 ## Feb 14, 2022
+## Updated May 8, 2023
 
 library(tidyverse)
 
@@ -40,10 +41,10 @@ rec <- readRDS(here::here("data", "receivers_all.RDS"))$rec_all
 dum <- readRDS(here::here("data", "acousticOnly_GSI.RDS"))
 stage_dat <- readRDS(here::here("data", "agg_lifestage_df.RDS")) %>% 
   left_join(., 
-            dum %>% dplyr::select(vemco_code = acoustic_year, mean_log_e, 
+            dum %>% dplyr::select(vemco_code = acoustic_year, lipid, 
                                   cu_name), 
             by = "vemco_code") %>% 
-  select(vemco_code, fl, stage_predicted, mean_log_e, cu_name, agg)  
+  select(vemco_code, fl, stage_predicted, lipid, cu_name, agg)  
 
 # ~2% of tags lack energy density estimates, impute
 interp_stage_dat <- VIM::kNN(stage_dat, k = 5) %>% 
@@ -60,14 +61,24 @@ depth_raw <- readRDS(here::here("data", "detections_all.RDS")) %>%
             rec %>% 
               select(receiver = receiver_name, trim_sn, mean_depth:shore_dist),
             by = "receiver") %>% 
-  select(vemco_code, stage, fl, mean_log_e, cu_name, agg, date_time, latitude, 
+    select(vemco_code, stage, fl, lipid, cu_name, agg, date_time, latitude, 
          longitude, receiver_name = receiver, trim_sn, region, 
-         mean_bathy = mean_depth, max_bathy = max_depth, mean_slope, shore_dist,
-         depth)
+         mean_bathy = mean_depth, max_bathy = max_depth, mean_slope, mean_aspect,
+         shore_dist, depth)
 
 
-# B. Hendricks data
-hendricks_bio <- readRDS(here::here("data", "hendricks_chin_dat.RDS"))
+# B. Hendricks data with energy meter rescaled to lipid
+calc_lipid <- function(mean_energy) {
+  ifelse(
+    mean_energy < 1.059, 
+    -1.973 + (6.758 * mean_energy),
+    -1.973 + 6.758 * 1.059 + ((6.758 - 6.202) * (mean_energy - 1.059))
+  )
+}
+hendricks_bio <- readRDS(here::here("data", "hendricks_chin_dat.RDS")) %>% 
+  mutate(
+    lipid = calc_lipid(exp(mean_log_e))
+  )
 
 depth_h <- readRDS(here::here("data", "hendricks_depth_dets.RDS")) %>% 
   mutate(trim_sn = as.character(receiver_sn),
@@ -82,7 +93,7 @@ depth_h <- readRDS(here::here("data", "hendricks_depth_dets.RDS")) %>%
   ungroup() %>% 
   left_join(., 
             hendricks_bio %>% 
-              select(vemco_code, fl, mean_log_e, cu_name, agg = agg_name), 
+              select(vemco_code, fl, lipid, cu_name, agg = agg_name), 
             by = "vemco_code") %>%
   select(colnames(depth_raw)) 
 
@@ -109,22 +120,27 @@ depth_dets1 <- rbind(depth_raw, depth_h) %>%
 
 ## EXPORT STATIONS -------------------------------------------------------------
 
+## Three different ROMS datasets
+# 1) surface conditions for each variable-detection
+# 2) temperature and oxygen profiles for each detection 
+# 3) predictive grids for two time periods (July 1 and Feb 1)
+
 # expand depth dets by different covariates and depths
 trim_dets <- depth_dets1 %>% 
   select(year, month, day, hour, lat = latitude, lon = longitude) %>% 
   distinct()
 var_list <- c("u", "v", "w", "temp", "zooplankton", "phytoplankton", "oxygen")
-# focus on one depth given strong correlations among them
-depth_list <- c(#5, 
-  25#, 50
-  )
+# focus on surface depth given detections in shallows will be excluded otherwise
+# depth_list <- c(#5, 
+#   , 25, 50
+#   )
 
-roms_dat_out <- expand.grid(
+# surface conditions
+surface_out <- expand.grid(
   variable = var_list,
-  depth = depth_list
+  depth = 1#depth_list
 ) %>% 
   mutate(
-    # depth = ifelse(variable == "w", -999, depth),
     fac = paste(variable, depth, sep = "_")
   ) %>% 
   distinct() %>% 
@@ -140,21 +156,73 @@ roms_dat_out <- expand.grid(
                 lon, depth, depthFrac) 
 
 
-# roms_dat_out %>% filter(
-#   hour == "19", month == "9", day == "15", year == "2020",
-#   lat == missing_roms$latitude[1], lon == missing_roms$longitude[1] 
-# )
-# roms_dat %>% filter(
-#   hour %in% missing_roms$hour_int, 
-#   month %in% lubridate::month(missing_roms$date_time), 
-#   day %in% lubridate::day(missing_roms$date_time), 
-#   year %in% lubridate::year(missing_roms$date_time),
-#   lat %in% missing_roms$latitude, lon %in% missing_roms$longitude 
-# )
+# profiles
+profiles_out <- expand.grid(
+  variable = c("oxygen", "temp"),
+  depth = seq(0, 350, by = 5)
+) %>% 
+  mutate(
+    fac = paste(variable, depth, sep = "_")
+  ) %>% 
+  distinct() %>% 
+  split(., .$fac) %>% 
+  purrr::map(., function (x) {
+    trim_dets %>% 
+      mutate(variable = x$variable,
+             depth = x$depth)
+  }) %>% 
+  bind_rows %>% 
+  mutate(depthFrac = -999) %>% 
+  dplyr::select(year, month, day, hour, variable, lat,
+                lon, depth, depthFrac)
+
+
+# prediction grid
+pred_grid <- readRDS(here::here("data", "pred_bathy_grid_utm_no_bark.RDS"))
+pred_grid_ll <- sf::st_transform(
+  pred_grid, 
+  crs = sp::CRS("+proj=longlat +datum=WGS84")
+) 
+pred_out <- expand.grid(
+  variable = var_list,
+  time_stamp = c("2020-07-15", "2021-02-15")
+) %>% 
+  mutate(
+    time_stamp = as.POSIXct(
+      time_stamp,
+      format = "%Y-%m-%d"
+    ),
+    fac = paste(variable, as.factor(time_stamp), sep = "_")
+    ) %>% 
+  distinct() %>% 
+  split(., .$fac) %>% 
+  purrr::map(., function (x) {
+    data.frame(
+      sf::st_coordinates(pred_grid_ll[ , 1]),
+      variable = x$variable,
+      time_stamp = x$time_stamp,
+      depth = 1) %>% 
+      mutate(
+        year = lubridate::year(time_stamp), 
+        month = lubridate::month(time_stamp), 
+        day = lubridate::day(time_stamp), 
+        hour = 12
+      ) 
+  }) %>% 
+  bind_rows %>% 
+  mutate(depthFrac = -999) %>% 
+  dplyr::select(year, month, day, hour, variable, lat = Y,
+                lon = X, depth, depthFrac)
 
 
 # export 
-write.csv(roms_dat_out, here::here("data", "stations_roms_no_infill.csv"),
+write.csv(surface_out, here::here("data", "stations_roms_no_infill.csv"),
+          row.names = FALSE)
+write.csv(profiles_out, 
+          here::here("data", "vert_profiles_stations_roms_no_infill.csv"),
+          row.names = FALSE)
+write.csv(pred_out, 
+          here::here("data", "pred_stations_roms_no_infill.csv"),
           row.names = FALSE)
 
 
@@ -163,6 +231,7 @@ write.csv(roms_dat_out, here::here("data", "stations_roms_no_infill.csv"),
 temp_dat <- read.csv(
   here::here("data", "raw_roms", 
              "stations_roms_no_infill_tempProfile_05oct22_all.csv")) %>%
+  glimpse()
   left_join(., 
             rec %>% 
               select(lat = station_latitude, lon = station_longitude,

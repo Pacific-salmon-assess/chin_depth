@@ -218,9 +218,9 @@ pred_out <- expand.grid(
 # export 
 write.csv(surface_out, here::here("data", "stations_roms_no_infill.csv"),
           row.names = FALSE)
-write.csv(profiles_out, 
-          here::here("data", "vert_profiles_stations_roms_no_infill.csv"),
-          row.names = FALSE)
+# write.csv(profiles_out, 
+#           here::here("data", "vert_profiles_stations_roms_no_infill.csv"),
+#           row.names = FALSE)
 write.csv(pred_out, 
           here::here("data", "pred_stations_roms_no_infill.csv"),
           row.names = FALSE)

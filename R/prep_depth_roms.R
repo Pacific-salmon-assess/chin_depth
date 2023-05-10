@@ -129,7 +129,7 @@ depth_dets1 <- rbind(depth_raw, depth_h) %>%
 trim_dets <- depth_dets1 %>% 
   select(year, month, day, hour, lat = latitude, lon = longitude) %>% 
   distinct()
-var_list <- c("u", "v", "w", "temp", "zooplankton", "phytoplankton", "oxygen")
+var_list <- c("u", "v", "w", "temp", "zooplankton", "oxygen")
 # focus on surface depth given detections in shallows will be excluded otherwise
 # depth_list <- c(#5, 
 #   , 25, 50

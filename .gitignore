@@ -18,6 +18,7 @@ knitr-cache
 .RHistory
 R/hidden/
 data/model_fits/
+data/raw_roms/old/
 
 myNotes.*
 #outputs/

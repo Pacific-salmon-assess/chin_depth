@@ -2,7 +2,7 @@
 ## Export stations for query, then import and evaluate 
 ## Query conducted by Doug Jackson (doug@qedaconsulting.com)
 ## Feb 14, 2022
-## Updated May 8, 2023
+## Updated May 23, 2023
 
 library(tidyverse)
 
@@ -36,6 +36,19 @@ time_foo <- function(x) {
 
 # receiver data (includes bathymetric data generated in chin_tagging repo)
 rec <- readRDS(here::here("data", "receivers_all.RDS"))$rec_all 
+
+dum <- rec %>% 
+  select(station_latitude, station_longitude, mean_depth) %>% 
+  distinct() %>% 
+  group_by(station_latitude, station_longitude) %>% 
+  tally() %>% 
+  filter(n > 1)
+
+rec %>% 
+  filter(station_latitude %in% dum$station_latitude[1:2] & 
+           station_longitude %in% dum$station_longitude[1:2]) %>% 
+  select(station_name, deploymentdatetime_timestamp, recoverydatetime_timestamp,
+         mean_depth)
 
 # life stage estimates
 dum <- readRDS(here::here("data", "acousticOnly_GSI.RDS"))
@@ -226,12 +239,11 @@ write.csv(pred_out,
           row.names = FALSE)
 
 
-## IMPORT TEMPERATURE DATA -----------------------------------------------------
+## IMPORT PROFILE DATA ---------------------------------------------------------
 
-temp_dat <- read.csv(
+profile_dat <- read.csv(
   here::here("data", "raw_roms", 
-             "stations_roms_no_infill_tempProfile_05oct22_all.csv")) %>%
-  glimpse()
+             "stations_roms_no_infill_profiles_10may23_all.csv")) %>%
   left_join(., 
             rec %>% 
               select(lat = station_latitude, lon = station_longitude,
@@ -251,10 +263,11 @@ temp_dat <- read.csv(
       difftime(time1, timestamp) %>% 
       as.numeric()
   ) %>% 
-  filter(!depth < 0)
+  filter(!depth < 0) 
 
 # calculate thermocline depth at each station
-thermo_dat<- temp_dat %>% 
+thermo_dat<- profile_dat %>% 
+  filter(variable == "temp") %>% 
   group_by(unique_id, lat, lon, timestamp, region) %>% 
   summarize(
     thermo_depth = rLakeAnalyzer::thermo.depth(wtr = value, depths = depth),
@@ -295,45 +308,18 @@ dev.off()
 # survey domain
 # Feb pull has multiple depths, but latter do not because highly correlated 
 # with one another
-roms_dat <- read.csv(
-  # here::here("data", "raw_roms", "stations_roms_no_infill_25mar22_all.csv")) %>%
-  
-  here::here("data", "raw_roms", "stations_roms_no_infill_05oct22_all.csv")) %>%
-  distinct()
+roms_in <- read.csv(
+  here::here("data", "raw_roms", "stations_roms_no_infill_10may23_all.csv"))
 
-
-# histogram of values by depth and variable
-# ggplot(roms_dat) +
-#   geom_histogram(aes(x = value)) +
-#   facet_wrap(~variable, scales = "free") +
-#   ggsidekick::theme_sleek()
-# 
-# 
-# # evaluate correlations between depth strata for each variable
-# wide_roms <- roms_dat %>%
-#   pivot_wider(names_from = "depth", names_prefix = "depth_",
-#               values_from = "value") %>%
-#   filter(!is.na(depth_25))
-# 
-# corr_list <- wide_roms %>%
-#   split(., .$variable) %>%
-#   purrr::map2(., names(.), function (x, y) {
-#     corr <- cor(x %>% select(depth_5, depth_25, depth_50))
-#     ggcorrplot::ggcorrplot(corr) +
-#       labs(title = y)
-#   })
-# # u and v highly correlated through depth range; w not correlated at all;
-# # zooplankton shows correlations at 25 m; use 25 for now
-
-
-roms_25 <- roms_dat %>%
-  left_join(., 
-            rec %>% 
+roms_dat <- roms_in %>%
+  left_join(.,
+            rec %>%
               select(lat = station_latitude, lon = station_longitude,
-                     region, mean_depth, mean_slope, 
-                     shore_dist ) %>% 
+                     region, mean_depth, mean_slope,
+                     shore_dist ) %>%
               distinct(),
-            by = c("lat", "lon")) %>% 
+            by = c("lat", "lon")
+            ) %>%
   filter(!region == "fraser") %>%
   pivot_wider(names_from = "variable", values_from = "value") %>%
   # add time step variable used during imputation and for ID 
@@ -346,63 +332,64 @@ roms_25 <- roms_dat %>%
       difftime(time1, timestamp) %>% 
       as.numeric()
   ) %>% 
-  left_join(., thermo_dat, by = c("lat", "lon", "timestamp")) %>% 
+  left_join(., 
+            thermo_dat %>% select(-c(region, median_thermo)),
+            by = c("lat", "lon", "timestamp")) %>% 
   select(-depth, -depthFrac, -c(date:time1)) %>% 
   # remove duplicates introduced by receivers being deployed at identical 
   # locations
   distinct() %>% 
   rename(zoo = zooplankton, latitude = lat, longitude = lon,
-         roms_temp = temp) %>% 
-  # remove phyto because highly correlated with zoo
-  select(-phytoplankton)
+         roms_temp = temp) 
 
-depth_utm <- lonlat_to_utm(roms_25$longitude, roms_25$latitude, 
+depth_utm <- lonlat_to_utm(roms_dat$longitude, roms_dat$latitude, 
                            zone = 10) 
-roms_25$utm_x <- depth_utm$X / 1000 
-roms_25$utm_y <- depth_utm$Y / 1000
+roms_dat$utm_x <- depth_utm$X / 1000 
+roms_dat$utm_y <- depth_utm$Y / 1000
 
 # replace unknown values with NA
-roms_25[roms_25 == "-999"] <- NA
+roms_dat[roms_dat == "-999"] <- NA
 
-# identify proportion fo NA by each ROMS variable
-roms_25 %>% 
+# identify proportion of NA by each ROMS variable
+roms_trim %>% 
   pivot_longer(., 
                cols = c(roms_temp, w, v, oxygen, u, zoo, thermo_depth), 
                names_to = "roms_var") %>% 
   filter(is.na(value)) %>% 
   group_by(roms_var) %>% 
   tally() %>% 
-  mutate(n / nrow(roms_25)) 
-
+  mutate(n / nrow(roms_trim)) 
 
 # plot locations of missing stations
 # coast <- readRDS(here::here("data",
-#                             "coast_major_river_sf_plotting.RDS")) %>% 
-#   sf::st_crop(., 
+#                             "coast_major_river_sf_plotting.RDS")) %>%
+#   sf::st_crop(.,
 #               xmin = -127.5, ymin = 46, xmax = -122, ymax = 49.5)
 # 
 # plot_missing_foo <- function(var = "roms_temp") {
-#   dum <- roms_25 %>% 
-#     filter(is.na(UQ(sym(var)))) %>% 
-#     select(month, latitude, longitude, {{ var }}) %>% 
-#     distinct() 
+#   dum <- roms_dat %>%
+#     filter(is.na(UQ(sym(var)))) %>%
+#     select(month, latitude, longitude, {{ var }}) %>%
+#     distinct()
 # 
 #   ggplot() +
 #     geom_sf(data = coast) +
-#     geom_point(data = dum, aes(x = longitude, y = latitude), shape = 21, 
+#     geom_point(data = dum, aes(x = longitude, y = latitude), shape = 21,
 #                colour = "red") +
 #     ggsidekick::theme_sleek()
 # }
 # 
 # plot_missing_foo(var = "u")
-# plot_missing_foo(var = "thermo_depth") +
+# plot_missing_foo(var = "u") +
 #   facet_wrap(~month)
-# 
-# # check correlations among roms vars
-# corr <- cor(roms_25 %>% 
-#               select(roms_temp, w, v, oxygen, u, zoo, thermo_depth),
-#             use = "pairwise.complete.obs")
-# ggcorrplot::ggcorrplot(corr) 
+# plot_missing_foo(var = "u") +
+#   facet_wrap(~year)
+
+# check correlations among roms vars
+corr <- cor(roms_dat %>%
+              select(roms_temp, w, v, oxygen, u, zoo, thermo_depth),
+            use = "pairwise.complete.obs")
+ggcorrplot::ggcorrplot(corr)
 
 
 # missing values due to a) unavailable data and b) delays between ROMS pulls
@@ -411,7 +398,12 @@ roms_25 %>%
 # k nearest neighbors
 # NOTE not all current ROMS pulls have associated receiver data but this will be 
 # corrected by next extraction
-roms_interp <- VIM::kNN(roms_25,
+# NOTE restricted to stations where at least some roms data were produced
+roms_trim <- roms_dat %>% 
+  # filter_at(vars(roms_temp:thermo_depth), all_vars(is.na(.)))
+  filter(!if_all(c(oxygen:roms_temp, thermo_depth), ~ is.na(.))) 
+
+roms_interp <- VIM::kNN(roms_trim,
                         variable = c("roms_temp", "w", "v", "oxygen", "u", "zoo", 
                                      "thermo_depth"),
                         dist_var = c("timestamp", "utm_x", "utm_y",
@@ -424,12 +416,16 @@ roms_interp_trim <- roms_interp %>%
 
 
 saveRDS(roms_interp_trim, 
-        here::here("data", "interp_roms_25m_depth.RDS"))
+        here::here("data", "interp_roms_surf_depth.RDS"))
+saveRDS(roms_dat  %>% 
+          select(year:longitude, roms_temp, w, v, oxygen, u, zoo, thermo_depth), 
+        here::here("data", "roms_surf_depth.RDS"))
 
 
 ## CLEAN DEPTH DATA ------------------------------------------------------------
 
-roms_interp_trim <- readRDS(here::here("data", "interp_roms_25m_depth.RDS"))
+roms_interp_trim <- readRDS(here::here("data", "interp_roms_surf_depth.RDS"))
+# roms_dat<- readRDS(here::here("data", "roms_surf_depth.RDS"))
 
 depth_utm <- lonlat_to_utm(depth_dets1$longitude, depth_dets1$latitude, 
                            zone = 10) 
@@ -437,11 +433,13 @@ depth_dets1$utm_x <- depth_utm$X / 1000
 depth_dets1$utm_y <- depth_utm$Y / 1000
 
 
-# add roms data (approximately 4.6k detections have no ROMS data)
+# add roms data (approximately 6.5k detections have no ROMS data)
 depth_dat <- depth_dets1 %>% 
   left_join(
-    ., roms_interp_trim, 
-    by = c("latitude", "longitude", "day", "month", "year", "hour")
+    ., 
+    roms_interp_trim, 
+    by = c("latitude", "longitude", "day", "month", "year", "hour"),
+    
   ) %>% 
   mutate(
     start_time = min(date_time),
@@ -469,12 +467,13 @@ depth_dat <- depth_dets1 %>%
       "mature",
       stage
     )
-  )  %>% 
+  ) %>% 
   filter(
     # remove large errors in depth relative to bottom bathymetry
     depth < max_bathy
   ) %>% 
   droplevels()
+
 
 # add moon data
 moon_data <- oce::moonAngle(depth_dat$date_time, 
@@ -502,7 +501,7 @@ depth_dat2 <- cbind(depth_dat, temp %>% dplyr::select(sunrise, sunset)) %>%
     det_dayy = cos(2 * pi * local_day / 365)
   ) %>%
   dplyr::select(
-    vemco_code, cu_name, agg, fl, mean_log_e, stage, trim_sn, 
+    vemco_code, cu_name, agg, fl, lipid, stage, trim_sn, 
     receiver_name, latitude, longitude, utm_y, utm_x, max_bathy,
     mean_bathy, mean_slope, 
     shore_dist, u, v, w, roms_temp, zoo, oxygen, thermo_depth,
@@ -537,6 +536,8 @@ depth_dat2 %>%
 
 ## DETECTION/BATHY MAPS --------------------------------------------------------
 
+## NOTE CURRENTLY EXCLUDES DETS WITH MISSING ROMS
+
 library(maptools)
 library(rmapshaper)
 library(mapdata)
@@ -551,7 +552,8 @@ sf::st_crs(coast_plotting) <- 4326
 
 
 ## Detection Maps
-depth_dat2 <- readRDS(here::here("data", "depth_dat_nobin.RDS"))
+depth_dat2 <- readRDS(here::here("data", "depth_dat_nobin.RDS")) %>% 
+  filter(!is.na(roms_temp))
 
 # base receiver plot
 base_rec_plot <- ggplot() +
@@ -611,7 +613,7 @@ rec_plot_depth <- base_rec_plot +
 
 png(here::here("figs", "ms_figs", "rec_locations_det.png"),
     height = 5, width = 7, res = 250, units = "in")
-rec_plot
+rec_plot_det
 dev.off()
 
 png(here::here("figs", "ms_figs", "rec_locations_depth.png"),
@@ -660,7 +662,8 @@ bb_coords <- sf::st_coordinates(coast_utm_bathy) %>% as.data.frame()
 
 # receivers 
 rec_locs <- rec %>%
-  filter(marine == "yes") %>%
+  filter(marine == "yes",
+         !station_latitude < 46) %>%
   select(station_latitude, station_longitude) %>%
   distinct()
 rec_locs <- sdmTMB::add_utm_columns(
@@ -684,7 +687,7 @@ rec_plot <-  blank_p +
                 xmin = min(bb_coords$X),
                 ymax = max(bb_coords$Y),
                 ymin = min(bb_coords$Y) + 5000),
-            color = "black", fill = "transparent", size = 1, lty = 2) + 
+            color = "black", fill = "transparent", lty = 2) + 
   geom_label(data = labs_dat, aes(x = X, y = Y, label = lab), size = 3) +
   geom_point(data = rec_locs, aes(x = X, y = Y), 
              fill = "red", shape = 21, alpha = 0.5) +

@@ -19,21 +19,26 @@ library(DALEXtra)
 library(randomForest)
 
 
-depth_dat_raw <- readRDS(
+depth_dat_raw1 <- readRDS(
   here::here("data", "depth_dat_nobin.RDS")) %>% 
-  # approximately 4.6k detections have no available ROMS data; exclude for now
+  # approximately 6k detections have no available ROMS data; exclude for now
   filter(!is.na(roms_temp))
 
 
+# remove 2022 tag releases (~6k dets)
+depth_dat_raw <- depth_dat_raw1 %>% 
+  filter(!grepl("2022", vemco_code))
+
+
 # number of detections per tag
-depth_dat_raw %>% 
+depth_dat_raw1 %>% 
   group_by(vemco_code) %>% 
   tally() %>% 
   pull(n) %>% 
   range()
 
 # calculate timespan overwhich detections provided
-timespan <- depth_dat_raw %>% 
+timespan <- depth_dat_raw1 %>% 
   group_by(vemco_code) %>% 
   summarize(
     min_time = min(date_time_local),
@@ -61,7 +66,7 @@ ind_folds <- data.frame(
 depth_dat <- depth_dat_raw %>% 
   left_join(., ind_folds, by = "vemco_code") %>% 
   dplyr::select(
-    depth = rel_depth, fl, mean_log_e, stage, utm_x, utm_y, day_night,
+    depth = rel_depth, fl, lipid, stage, utm_x, utm_y, day_night,
     det_dayx, det_dayy,
     max_bathy, mean_bathy, mean_slope, shore_dist,
     u, v, w, roms_temp, zoo, oxygen, thermo_depth, moon_illuminated,
@@ -71,6 +76,14 @@ depth_dat <- depth_dat_raw %>%
 # split by individual blocking
 train_depth <- depth_dat %>% filter(!ind_block == "5") %>% droplevels()
 test_depth <- depth_dat %>% filter(ind_block == "5") %>% droplevels()
+test_depth_22 <- depth_dat_raw1 %>% 
+  filter(grepl("2022", vemco_code)) %>% 
+  dplyr::select(
+    depth = rel_depth, fl, lipid, stage, utm_x, utm_y, day_night,
+    det_dayx, det_dayy,
+    max_bathy, mean_bathy, mean_slope, shore_dist,
+    u, v, w, roms_temp, zoo, oxygen, thermo_depth, moon_illuminated)
+
 
 depth_recipe <- recipe(depth ~ ., 
                        data = train_depth %>% 
@@ -91,7 +104,7 @@ train_depth_baked <- prep(depth_recipe) %>%
        new_data = train_depth %>% 
          dplyr::select(-ind_block, -max_bathy))
 
-# pull model attributes from top ranger
+#pull model attributes from top ranger
 # rf_list <- readRDS(here::here("data", "model_fits", "rf_model_comparison.rds"))
 # top_mod <- rf_list[[2]]$top_model
 # 
@@ -119,12 +132,12 @@ dum <- train_depth %>%
   mutate(mean_pred = obs_preds$predictions,
          mean_pred_real = mean_pred * max_bathy,
          depth_real = depth * max_bathy,
-         split_group = "train")
+         split_group = "train 2019-21")
 plot(depth ~ mean_pred, dum)
 plot(depth_real ~ mean_pred_real, dum)
 
 
-# all preds 
+# hold out predictions
 test_depth_baked <- prep(depth_recipe) %>%
   bake(., 
        new_data = test_depth %>% 
@@ -135,15 +148,31 @@ dum_test <- test_depth %>%
   mutate(mean_pred = test_preds$predictions,
          mean_pred_real = mean_pred * max_bathy,
          depth_real = depth * max_bathy,
-         split_group = "test")
+         split_group = "test 2019-21")
 
-all_preds <- rbind(dum, dum_test) 
+
+# 2022 predictions
+test_depth_baked_22 <- prep(depth_recipe) %>%
+  bake(., 
+       new_data = test_depth_22 %>% 
+         dplyr::select(-max_bathy))
+test_preds_22<- predict(ranger_rf,
+                      data = test_depth_baked_22)
+dum_test_22 <- test_depth_22 %>% 
+  mutate(ind_block = NA,
+         mean_pred = test_preds_22$predictions,
+         mean_pred_real = mean_pred * max_bathy,
+         depth_real = depth * max_bathy,
+         split_group = "test 2022")
+
+all_preds <- do.call(rbind,
+                     list(dum, dum_test, dum_test_22))
 
 fit_obs <- ggplot() +
   geom_point(
     data = all_preds,
     aes(x = depth_real, y = mean_pred_real, fill = split_group),
-    shape = 21, alpha = 0.2
+    shape = 21, alpha = 0.1
     ) +
   labs(
     x = "Observed Depth", y = "Predicted Mean Depth"
@@ -175,7 +204,7 @@ imp_dat <- data.frame(
                  "mean_slope") ~ "spatial",
       var %in% c("det_day", "det_dayx", "det_dayy",
                  "day_night_night", "moon_illuminated") ~ "temporal",
-      var %in% c("stage_mature", "fl", "mean_log_e") ~ "biological",
+      var %in% c("stage_mature", "fl", "lipid") ~ "biological",
       TRUE ~ "dynamic"
     )
   ) %>% 

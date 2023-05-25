@@ -28,7 +28,10 @@ if (Sys.info()['sysname'] == "Windows") {
 }
 
 depth_dat_raw <- readRDS(
-  here::here("data", "depth_dat_nobin.RDS")) 
+  here::here("data", "depth_dat_nobin.RDS")) %>% 
+  filter(
+    !grepl("2022", vemco_code)
+  ) 
 
 
 # add individual block
@@ -46,7 +49,7 @@ depth_dat <- depth_dat_raw %>%
   filter(!is.na(roms_temp)) %>%
   dplyr::select(
     depth = pos_depth, rel_depth, logit_rel_depth,
-    fl, mean_log_e, stage, utm_x, utm_y, day_night,
+    fl, lipid, stage, utm_x, utm_y, day_night,
     # det_day = local_day,
     det_dayx, det_dayy,
     max_bathy, mean_bathy, mean_slope, shore_dist,
@@ -119,7 +122,7 @@ train_folds <- groupKFold(
   k = length(unique(model_tbl$train_data[[1]]$ind_block))
   )
 ctrl <-   trainControl(
-  method="repeatedcv",
+  method = "repeatedcv",
   index = train_folds
 )
 
@@ -185,7 +188,7 @@ fit_foo <- function(model, recipe, train_data) {
 plan(multisession, workers = 8)
 
 
-## fit models (separately)
+# fit models (separately)
 # gbm_tbl <- model_tbl %>% filter(model_type == "gbm")
 # gbm_list <- future_pmap(list("gbm",
 #                              gbm_tbl$recipe,

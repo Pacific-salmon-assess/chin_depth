@@ -9,7 +9,7 @@
 # Nov 22 fit using ranger rather than quantregForest to be consistent with
 # model comparison
 # Nov 23 switch to transformed depth based on updated model comparison
-
+# May 25 add last batch of detections and additional ROMS data
 
 library(tidyverse)
 library(caret)
@@ -25,7 +25,7 @@ depth_dat_raw1 <- readRDS(
   filter(!is.na(roms_temp))
 
 
-# remove 2022 tag releases (~6k dets)
+# remove 2022 tag releases (~6k dets) for training model
 depth_dat_raw <- depth_dat_raw1 %>% 
   filter(!grepl("2022", vemco_code))
 
@@ -166,7 +166,11 @@ dum_test_22 <- test_depth_22 %>%
          split_group = "test 2022")
 
 all_preds <- do.call(rbind,
-                     list(dum, dum_test, dum_test_22))
+                     list(dum, dum_test, dum_test_22)) %>% 
+  mutate(
+    split_group = fct_relevel(
+      as.factor(split_group), "train 2019-21", after = 0)
+  )
 
 fit_obs <- ggplot() +
   geom_point(
@@ -178,10 +182,12 @@ fit_obs <- ggplot() +
     x = "Observed Depth", y = "Predicted Mean Depth"
   ) +
   scale_fill_discrete(name = "") +
-  ggsidekick::theme_sleek() 
+  ggsidekick::theme_sleek() +
+  facet_wrap(~split_group) +
+  theme(legend.position = "none")
 
 png(here::here("figs", "ms_figs_rel", "obs_preds_rel.png"),
-    height = 5.5, width = 6, units = "in", res = 200)
+    height = 3, width = 6, units = "in", res = 200)
 fit_obs
 dev.off()
 
@@ -267,17 +273,23 @@ coast_utm <- rbind(rnaturalearth::ne_states( "United States of America",
   sf::st_transform(., crs = sp::CRS("+proj=utm +zone=10 +units=m"))
 
 
-bath_grid_in <- readRDS(here::here("data", "pred_bathy_grid_utm.RDS")) 
+# bath_grid_in <- readRDS(here::here("data", "pred_bathy_grid_utm_no_bark.RDS")) 
+# bath_grid <- bath_grid_in %>% 
+#   mutate(utm_x = X / 1000,
+#          utm_y = Y / 1000) %>% 
+#   select(utm_x, utm_y, mean_bathy = depth, max_bathy = max_depth,
+#          mean_slope = slope, shore_dist) %>% 
+#   filter(!mean_bathy > 400,
+#          !max_bathy > 500,
+#          utm_y > 5100)
+bath_grid_in <- readRDS(here::here("data", "pred_bathy_grid_roms.RDS")) 
 bath_grid <- bath_grid_in %>% 
-  mutate(utm_x = X / 1000,
-         utm_y = Y / 1000) %>% 
-  select(utm_x, utm_y, mean_bathy = depth, max_bathy = max_depth,
-         mean_slope = slope, shore_dist) %>% 
   filter(!mean_bathy > 400,
          !max_bathy > 500,
          utm_y > 5100)
 
-ggplot(bath_grid) +
+
+ggplot(bath_grid %>% filter(local_day == "211")) +
   geom_raster(aes(x = utm_x, y = utm_y, fill = mean_bathy))
 
 

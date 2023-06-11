@@ -531,6 +531,19 @@ pred_roms_in <- read.csv(
     value = na_if(value, -999)
   )
 
+# number of NAs by variable
+pred_roms_in %>% 
+  filter(is.na(value)) %>% 
+  group_by(variable, month) %>% 
+  tally()
+
+pred_roms_in %>% 
+  filter(variable == "v" & is.na(value)) %>% 
+  glimpse()
+pred_roms_in %>% 
+  filter(variable == "u" & is.na(value)) %>% 
+  glimpse()
+
 pred_utm <- lonlat_to_utm(pred_roms_in$lon, pred_roms_in$lat, zone = 10) 
 
 # combine and export
@@ -566,13 +579,16 @@ pred_grid_sf$utm_y <- sf::st_coordinates(pred_grid_sf[ , 1])[, "Y"] / 1000
 dum <- sf::st_join(pred_roms_sf, pred_grid_sf, join = nngeo::st_nn, 
                    maxdist = 1000, k = 1, progress = FALSE)
 
-pred_roms_out <- sf::st_drop_geometry(dum)
+pred_roms_out <- sf::st_drop_geometry(dum) %>% 
+  rename(mean_bathy = depth, max_bathy = max_depth, mean_slope = slope)
 
-ggplot(dum2 %>% filter(season == "summer")) +
+ggplot(pred_roms_out %>% filter(season == "summer", !is.na(u))) +
   geom_raster(aes(x = utm_x, y = utm_y, fill = roms_temp))
 
-
-saveRDS(pred_roms_out, here::here("data", "pred_bathy_grid_roms.RDS"))
+# export removing cells that lack data for any ROMS variable
+saveRDS(pred_roms_out %>% 
+          filter(!is.na(u), !is.na(v)), 
+        here::here("data", "pred_bathy_grid_roms.RDS"))
 
 
 ## CHECK DETS ------------------------------------------------------------------

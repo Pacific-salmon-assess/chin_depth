@@ -282,11 +282,30 @@ coast_utm <- rbind(rnaturalearth::ne_states( "United States of America",
 #   filter(!mean_bathy > 400,
 #          !max_bathy > 500,
 #          utm_y > 5100)
+
+# REPLACED BY ESTIMATED VALUES FROM ROMS
+# calculate mean roms_variables for different seasons (using monthly averages)
+roms_month_means <- readRDS(here::here("data", "depth_dat_nobin.RDS")) %>%
+  mutate(month = lubridate::month(date_time_local)) %>%
+  filter(month %in% c(1, #4, 
+                      7)) %>%
+  mutate(season = ifelse(month == "1", "winter", "summer")) %>%
+  group_by(season) %>%
+  dplyr::summarize(
+    # u = mean(u, na.rm = T),
+    # roms_temp = mean(roms_temp, na.rm = T),
+    # v = mean(v, na.rm = T),
+    # w = mean(w, na.rm = T),
+    # zoo = mean(zoo, na.rm = T),
+    # oxygen = mean(oxygen, na.rm = T),
+    thermo_depth = mean(thermo_depth, na.rm = T))
+
 bath_grid_in <- readRDS(here::here("data", "pred_bathy_grid_roms.RDS")) 
 bath_grid <- bath_grid_in %>% 
   filter(!mean_bathy > 400,
          !max_bathy > 500,
-         utm_y > 5100)
+         utm_y > 5100) %>% 
+  left_join(., roms_month_means, by = "season")
 
 
 ggplot(bath_grid %>% filter(local_day == "211")) +
@@ -301,52 +320,22 @@ base_plot <- ggplot() +
   scale_y_continuous(expand = c(0, 0))
 
 
-# calculate mean roms_variables for different seasons (using monthly averages)
-roms_month_means <- readRDS(here::here("data", "depth_dat_nobin.RDS")) %>% 
-  mutate(month = lubridate::month(date_time_local)) %>% 
-  filter(month %in% c(1, 4, 7, 10)) %>% 
-  mutate(month = as.factor(as.character(month))) %>% 
-  group_by(month) %>% 
-  dplyr::summarize(
-    u = mean(u, na.rm = T),
-    roms_temp = mean(roms_temp, na.rm = T),
-    v = mean(v, na.rm = T),
-    w = mean(w, na.rm = T),
-    zoo = mean(zoo, na.rm = T),
-    oxygen = mean(oxygen, na.rm = T),
-    thermo_depth = mean(thermo_depth, na.rm = T)) 
-
 
 ## first set are average spatial predictions (i.e. mean biological and temporal 
 ## attributes)
 
 # biological data
 bio_dat <- depth_dat_raw %>% 
-  select(vemco_code, fl, mean_log_e, stage) %>% 
+  select(vemco_code, fl, lipid, stage) %>% 
   distinct()
 
 # stratify predictions by non-spatial covariates
 pred_dat1 <- bath_grid %>% 
   mutate(
-    day_night_night = 0.5,
-    local_day = 197, #july 1
-    moon_illuminated = 0.5,
-    stage_mature = 0.5,
-    month = "7",
     fl = mean(bio_dat$fl),
-    mean_log_e = mean(bio_dat$mean_log_e)
-  ) %>% 
-# # add a winter dataset and append
-# pred_dat1_wint <- pred_dat1_summ %>% 
-#   mutate(
-#     local_day = 1
-#   )
-# pred_dat1 <- rbind(pred_dat1_wint, pred_dat1_summ) %>% 
-  mutate(
-    det_dayx = sin(2 * pi * local_day / 365),
-    det_dayy = cos(2 * pi * local_day / 365)
-  ) %>% 
-  left_join(roms_month_means, by = "month") 
+    lipid = mean(bio_dat$lipid),
+    stage_mature = 0.5
+  ) 
 
 pred_rf1 <- predict(ranger_rf,
                     type = "quantiles",
@@ -365,22 +354,22 @@ pred_dat2 <- pred_dat1 %>%
     utm_x_m = utm_x * 1000,
     utm_y_m = utm_y * 1000,
     pred_int_width = pred_up - pred_lo
-  ) %>% 
-  filter(mean_bathy < 400)
+  ) 
 
   
 rel_depth <- base_plot +
-  geom_raster(data = pred_dat2, 
+  geom_raster(data = pred_dat2 %>% filter(season == "summer"), 
               aes(x = utm_x_m, y = utm_y_m, fill = rel_pred_med)) +
   geom_sf(data = coast_utm) +
   scale_fill_viridis_c(name = "Bathymetric\nDepth Ratio",
                        direction = -1, 
                        option = "A") +
   theme(legend.position = "top",
-        axis.text = element_blank())
+        axis.text = element_blank()) +
+  facet_wrap(~season)
 
 mean_depth <- base_plot +
-  geom_raster(data = pred_dat2, 
+  geom_raster(data = pred_dat2 %>% filter(season == "summer"), 
               aes(x = utm_x_m, y = utm_y_m, fill = pred_med)) +
   geom_sf(data = coast_utm) +
   scale_fill_viridis_c(name = "Mean Depth",
@@ -388,7 +377,7 @@ mean_depth <- base_plot +
   theme(legend.position = "top")
 
 var_depth <- base_plot +
-  geom_raster(data = pred_dat2, 
+  geom_raster(data = pred_dat2 %>% filter(season == "summer"), 
               aes(x = utm_x_m, y = utm_y_m, fill = pred_int_width)) +
   geom_sf(data = coast_utm) +
   scale_fill_viridis_c(name = "Prediction\nInterval Width", 
@@ -414,25 +403,31 @@ dev.off()
 # 2) maturity effects for avg (July 1)
 # 3) moon illumination effects for avg  (July 1)
 stage_dat <- depth_dat_raw %>% 
-  select(vemco_code, fl, mean_log_e, stage) %>% 
+  select(vemco_code, fl, lipid, stage) %>% 
   distinct() %>% 
   group_by(stage) %>% 
   dplyr::summarize(
     fl = mean(fl),
-    mean_log_e = mean(mean_log_e)
+    lipid = mean(lipid)
   ) %>% 
   mutate(stage_mature = ifelse(stage == "mature", 1, 0)) %>% 
   rbind(., 
         data.frame(
           stage = "average",
           fl = mean(depth_dat_raw$fl),
-          mean_log_e = mean(depth_dat_raw$mean_log_e),
+          lipid = mean(depth_dat_raw$lipid),
           stage_mature = 0.5
         ))
 
+# subset bath_grid to remove covariates defined in predictive tibble
+bath_grid_trim <- bath_grid %>% 
+  select(-c(local_day, day_night_night, moon_illuminated, det_dayx, det_dayy)) %>% 
+  group_by(season) %>% 
+  group_nest()
+
 pred_tbl <- tibble(
   contrast = rep(c("season", "maturity", "moon light", "dvm"), each = 2),
-  local_day = c(16, 197, 197, 197, 197, 197, 197, 197),
+  local_day = c(46, 211, 211, 211, 211, 211, 211, 211),
   stage_mature = c(0, 0, 0, 1, 0.5, 0.5, 0.5, 0.5),
   moon_illuminated = c(0.5, 0.5, 0.5, 0.5, 0, 1, 0.5, 0.5),
   day_night_night = c(0.5, 0.5, 0.5, 0.5, 1, 1, 0, 1)
@@ -441,35 +436,24 @@ pred_tbl <- tibble(
     det_dayx = sin(2 * pi * local_day / 365),
     det_dayy = cos(2 * pi * local_day / 365),
     season = fct_recode(as.factor(local_day), 
-                        "winter" = "16", "summer" = "197"),
-    month = factor(as.factor(local_day), labels = c("1", "7")),
-    # create prediction grid based on fixed covariates
-    pred_grid = purrr::pmap(
-      list(det_dayx, det_dayy, moon_illuminated, month, day_night_night,
-           stage_mature),
-      function (u, v, w, x, y, z) {
-        bath_grid %>%
-          mutate(
-            det_dayx = u,
-            det_dayy = v,
-            moon_illuminated = w,
-            month = x,
-            day_night_night = y,
-            stage_mature = z) %>%
-          left_join(., stage_dat %>% select(-stage), by = "stage_mature") %>%
-          left_join(., roms_month_means, by = "month")
-      }
-      ),
+                        "winter" = "46", "summer" = "211"),
+    month = factor(as.factor(local_day), labels = c("1", "7"))) %>% 
+  left_join(., bath_grid_trim, by = "season") %>%
+  left_join(., stage_dat, by = "stage_mature") %>% 
+  unnest(cols = c(data)) %>% 
+  group_by(contrast, .add = TRUE) %>% 
+  group_nest(.key = "pred_grid") %>%
+  mutate(
     # generate predictions
     preds = purrr::map(pred_grid, function (x) {
-      pred_rf <- predict(ranger_rf, 
+      pred_rf <- predict(ranger_rf,
                          type = "quantiles",
                          quantiles = c(0.1, 0.5, 0.9),
-                         data = x, 
+                         data = x,
                          all = TRUE)
       colnames(pred_rf$predictions) <- c("lo", "med", "up")
       
-      bath_grid %>%
+      x %>%
         mutate(
           rel_pred_med = pred_rf$predictions[, "med"],
           rel_pred_lo = pred_rf$predictions[, "lo"],
@@ -482,13 +466,11 @@ pred_tbl <- tibble(
         )
     }
     )
-  )
-  
-pred_dat <- pred_tbl %>% 
-  select(contrast, season, stage_mature, moon_illuminated, day_night_night,
-         preds) %>% 
-  unnest(cols = preds)
+    )
 
+pred_dat <- pred_tbl %>% 
+  select(-pred_grid) %>%
+  unnest(cols = preds)
 
 ## Show raw differences between plots
 season_map_abs <- base_plot +
@@ -665,7 +647,7 @@ dev.off()
 
 # set non-coordinate spatial variables to mean values 
 pred_latent <- pred_dat1 %>% 
-  filter(mean_bathy < 400) %>% 
+  filter(season == "summer") %>% 
   mutate(
     mean_bathy = mean(mean_bathy),
     mean_slope = mean(mean_slope),
@@ -715,9 +697,8 @@ rel_latent <- base_plot +
 # generate predictions for maturity stage and different counterfacs (e.g. 
 # most important 4 variables)
 
-# currently grouped by location, but consider removing and refocusing on mean
-# utm
-
+# currently grouped by location but only present JdF; alternatively could switch
+# to mean utm
 new_dat <- 
   data.frame(
     # points representing Ucluelet and JdF
@@ -737,7 +718,7 @@ new_dat <- new_dat %>%
   # utm_y = mean(train_depth_baked$utm_y),
   mutate(
     fl = mean(train_depth_baked$fl),
-    mean_log_e = mean(train_depth_baked$mean_log_e),
+    lipid = mean(train_depth_baked$lipid),
     mean_bathy = mean(train_depth_baked$mean_bathy),
     local_day = mean(depth_dat_raw$local_day),
     mean_slope = mean(train_depth_baked$mean_slope),
@@ -820,67 +801,27 @@ pred_foo <- function(preds_in, ...) {
     )
 }
 
-
 # counterfac_tbl <- tibble(
 #   var_in = c("mean_bathy", "fl", "utm_x", "utm_y",
-#              "local_day", "mean_log_e", "thermo_depth",
+#              "local_day", "lipid", "thermo_depth",
 #              "roms_temp", "zoo", "oxygen", "shore_dist",
 #              "moon_illuminated", "mean_slope"
-#   )) %>% 
+#   )) %>%
 #   mutate(
-#     pred_dat_in = purrr::map(var_in, 
+#     pred_dat_in = purrr::map(var_in,
 #                              gen_pred_dat),
-#     # preds = purrr::map(pred_dat_in, 
-#     #                    pred_foo, 
+#     # preds = purrr::map(pred_dat_in,
+#     #                    pred_foo,
 #     #                    type = "quantiles",
 #     #                    quantiles = c(0.1, 0.5, 0.9)),
-#     preds_ci = purrr::map(pred_dat_in, 
-#                           pred_foo, 
+#     preds_ci = purrr::map(pred_dat_in,
+#                           pred_foo,
 #                           type = "se",
 #                           se.method = "infjack")
 #   )
 # saveRDS(counterfac_tbl,
 #         here::here("data", "counterfac_preds_ci.rds"))
 counterfac_tbl <- readRDS(here::here("data", "counterfac_preds_ci.rds"))
-
-
-## practice fig with both interval types
-# calculate overall depth range for y axis
-# bathy_preds <- counterfac_tbl %>% 
-#   filter(var_in == "mean_bathy") %>% 
-#   pull(preds) %>% 
-#   as.data.frame() %>% 
-#   select(
-#     site, mean_bathy, lo, mean, up,
-#   ) %>% 
-#   mutate(
-#     interval = "pred"
-#   )
-# 
-# bathy_preds2 <- counterfac_tbl %>% 
-#   filter(var_in == "mean_bathy") %>% 
-#   pull(preds_ci) %>% 
-#   as.data.frame() %>% 
-#   select(
-#     site, mean_bathy, lo, mean, up,
-#   ) %>% 
-#   mutate(
-#     interval = "ci"
-#   ) %>% 
-#   rbind(., bathy_preds)
-# 
-# alpha_pal <- c(0.2, 0.4)
-# names(alpha_pal) <- c("pred", "ci")
-# ggplot(bathy_preds2 %>% filter(interval == "ci"), aes(x = mean_bathy)) +
-#   geom_line(aes(y = mean)) +
-#   geom_ribbon(aes(ymin = lo, ymax = up, alpha = interval)) +
-#   scale_alpha_manual(values = alpha_pal) +
-#   ggsidekick::theme_sleek() +
-#   scale_x_continuous(expand = c(0, 0)) +
-#   scale_y_continuous(breaks = c(0, -0.25, -0.5, -0.75, -1.0),
-#                      labels = c("0", "0.25", "0.5", "0.75", "1.0"),
-#                      limits = c(-1, 0)) +
-#   facet_wrap(~site)
 
 
 
@@ -1047,43 +988,4 @@ dev.off()
 # dn_plot
 # dev.off()
 # 
-
-
-# BATHY VS YEAR DAY ------------------------------------------------------------
-
-# explore how relative depth changes across year-day and bathymetry
-new_dat_by <- expand.grid(
-  local_day = seq(1, 365, by = 5),
-  mean_bathy = seq(1, 365, by = 5)  
-) %>% 
-  mutate(
-    fl = mean(train_depth_baked$fl),
-    mean_log_e = mean(train_depth_baked$mean_log_e),
-    utm_x = mean(train_depth_baked$utm_x),
-    utm_y = mean(train_depth_baked$utm_y),
-    mean_slope = mean(train_depth_baked$mean_slope),
-    shore_dist = mean(train_depth_baked$shore_dist),
-    u = mean(train_depth_baked$u),
-    v = mean(train_depth_baked$v),
-    w = mean(train_depth_baked$w),
-    zoo = mean(train_depth_baked$zoo),
-    oxygen = mean(train_depth_baked$oxygen),
-    thermo_depth = mean(train_depth_baked$thermo_depth),
-    roms_temp = mean(train_depth_baked$roms_temp),
-    moon_illuminated = mean(train_depth_baked$moon_illuminated),
-    day_night_night = 0.5,
-    stage_mature = 0.5,
-    det_dayx = sin(2 * pi * local_day / 365),
-    det_dayy = cos(2 * pi * local_day / 365)
-  )
-
-pred_by <- pred_foo(preds_in = new_dat_by,  
-                    type = "quantiles")
-
-pdf(here::here("figs", "ms_figs_rel", "bathy_yearday_heatmap.pdf"),
-    height = 5, width = 6)
-ggplot(pred_by) +
-  geom_raster(aes(x = local_day, y = mean_bathy, fill = mean)) +
-  ggsidekick::theme_sleek() 
-dev.off()
 

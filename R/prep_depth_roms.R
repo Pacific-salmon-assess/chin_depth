@@ -645,8 +645,7 @@ base_rec_plot <- ggplot() +
   coord_sf(xlim = c(-128, -122.15), ylim = c(46, 51.25)) +
   labs(x = "", y = "") +
   ggsidekick::theme_sleek() +
-  theme(panel.background = element_rect(fill = "darkgrey"),
-        legend.position = "top") +
+  theme(panel.background = element_rect(fill = "darkgrey")) +
   facet_wrap(~year) +
   guides(fill = guide_legend(), 
          size = guide_legend()) 
@@ -658,18 +657,14 @@ rec_dets <- depth_dat2 %>%
   summarize(
     n_dets = n(),
     .groups = "drop"
-  ) %>% 
-  mutate(
-    det_bin = cut(n_dets, breaks=c(0, 25, 100, 500))
-  )
+  ) 
 
 rec_plot_det <- base_rec_plot +
   geom_point(data = rec_dets,
              aes(x = longitude, y = latitude, size = n_dets),
              shape = 21, fill = "red", alpha = 0.4,
              inherit.aes = FALSE) +
-  scale_size_continuous(name = "Number of \nDetections",
-                        breaks = c(0, 25, 100, 500, 1000)) 
+  scale_size_continuous(name = "Number of \nDetections") 
 
 
 # calculate mean depth by by receiver
@@ -678,27 +673,23 @@ rec_depth <- depth_dat2 %>%
   summarize(
     mean_depth = mean(pos_depth),
     .groups = "drop"
-  ) %>% 
-  mutate(
-    depth_bin = cut(mean_depth, breaks=c(0, 25, 50, 75, 100, 150, 250))
-  )
+  ) 
 
 rec_plot_depth <- base_rec_plot + 
   geom_point(data = rec_depth,
              aes(x = longitude, y = latitude, size = mean_depth),
              shape = 21, fill = "blue", alpha = 0.2,
              inherit.aes = FALSE) +
-  scale_size_continuous(name = "Mean Depth of \nDetections",
-                        breaks = c(0, 25, 50, 75, 100, 150, 250)) 
+  scale_size_continuous(name = "Mean Depth of \nDetections") 
 
 
-png(here::here("figs", "ms_figs", "rec_locations_det.png"),
-    height = 5, width = 7, res = 250, units = "in")
+png(here::here("figs", "ms_figs_rel", "rec_locations_det.png"),
+    height = 5, width = 5, res = 250, units = "in")
 rec_plot_det
 dev.off()
 
-png(here::here("figs", "ms_figs", "rec_locations_depth.png"),
-    height = 5, width = 7, res = 250, units = "in")
+png(here::here("figs", "ms_figs_rel", "rec_locations_depth.png"),
+    height = 5, width = 5, res = 250, units = "in")
 rec_plot_depth
 dev.off()
 
@@ -739,6 +730,7 @@ loc_dat <- data.frame(
 )
 
 # bounding box representing zone of predictions
+domain_coords <- sf::st_coordinates(coast_utm_rec) %>% as.data.frame()
 bb_coords <- sf::st_coordinates(coast_utm_bathy) %>% as.data.frame()
 
 # receivers 
@@ -764,7 +756,7 @@ blank_p <- ggplot() +
 # make plots
 rec_plot <-  blank_p +
   geom_sf(data = coast_utm_rec, fill = "darkgrey") +
-  geom_rect(aes(xmax = max(bb_coords$X) - 5000,
+  geom_rect(aes(xmax = max(bb_coords$X) - 25000,
                 xmin = min(bb_coords$X),
                 ymax = max(bb_coords$Y),
                 ymin = min(bb_coords$Y) + 5000),
@@ -774,7 +766,9 @@ rec_plot <-  blank_p +
              fill = "red", shape = 21, alpha = 0.5) +
   geom_point(data = loc_dat, aes(x = X, y = Y, shape = site), fill = "blue",
              size = 1.5) +
-  scale_shape_manual(values = c(23, 24), guide = NULL)
+  scale_shape_manual(values = c(23, 24), guide = NULL) +
+  coord_sf(ylim = c(min(domain_coords$Y), max(domain_coords$Y) - 15000),
+           xlim = c(min(domain_coords$X), max(domain_coords$X) - 15000))
 depth_plot <- blank_p +
   geom_raster(data = bath_grid,
               aes(x = X, y = Y, fill = depth)) +
@@ -782,21 +776,28 @@ depth_plot <- blank_p +
   scale_shape_manual(values = c(21, 24), guide = NULL) +
   scale_fill_viridis_c(name = "Depth (m)", direction = -1)  +
   theme(legend.position = "right",
-        axis.text = element_blank())
+        axis.text = element_blank()) +
+  coord_sf(ylim = c(min(bb_coords$Y) + 10000, 5480000),
+           xlim = c(min(bb_coords$X), max(bb_coords$X) - 10000))
 slope_plot <- blank_p +
   geom_raster(data = bath_grid, 
               aes(x = X, y = Y, fill = slope)) +
   geom_sf(data = coast_utm_bathy, fill = "darkgrey") +
   scale_fill_viridis_c(name = "Slope\n(degrees)", direction = -1) +
   theme(legend.position = "right",
-        axis.text = element_blank())
+        axis.text = element_blank()) +
+  coord_sf(ylim = c(min(bb_coords$Y) + 10000, 5480000),
+           xlim = c(min(bb_coords$X), max(bb_coords$X) - 10000))
 dist_plot <- blank_p +
   geom_raster(data = bath_grid, 
               aes(x = X, y = Y, fill = shore_dist_km)) +
   geom_sf(data = coast_utm_bathy, fill = "darkgrey") +
   scale_fill_viridis_c(name = "Distance\nto Coast\n(km)", direction = -1) +
   theme(legend.position = "right",
-        axis.text = element_blank())
+        axis.text = element_blank()) +
+  coord_sf(ylim = c(min(bb_coords$Y) + 10000, 5480000),
+           xlim = c(min(bb_coords$X), max(bb_coords$X) - 10000))
+
 
 bathy_vars1 <- cowplot::plot_grid(
   plotlist = list(depth_plot, slope_plot, dist_plot),

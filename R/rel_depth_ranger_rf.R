@@ -107,7 +107,7 @@ train_depth_baked <- prep(depth_recipe) %>%
 #pull model attributes from top ranger
 # rf_list <- readRDS(here::here("data", "model_fits", "rf_model_comparison.rds"))
 # top_mod <- rf_list[[2]]$top_model
-# 
+
 # ranger_rf <- ranger::ranger(
 #   depth ~ .,
 #   data = train_depth_baked,

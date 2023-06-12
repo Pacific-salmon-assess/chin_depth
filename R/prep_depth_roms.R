@@ -352,15 +352,6 @@ roms_dat$utm_y <- depth_utm$Y / 1000
 # replace unknown values with NA
 roms_dat[roms_dat == "-999"] <- NA
 
-# identify proportion of NA by each ROMS variable
-roms_trim %>% 
-  pivot_longer(., 
-               cols = c(roms_temp, w, v, oxygen, u, zoo, thermo_depth), 
-               names_to = "roms_var") %>% 
-  filter(is.na(value)) %>% 
-  group_by(roms_var) %>% 
-  tally() %>% 
-  mutate(n / nrow(roms_trim)) 
 
 # plot locations of missing stations
 # coast <- readRDS(here::here("data",
@@ -387,6 +378,7 @@ roms_trim %>%
 # plot_missing_foo(var = "u") +
 #   facet_wrap(~year)
 
+
 # check correlations among roms vars
 corr <- cor(roms_dat %>%
               select(roms_temp, w, v, oxygen, u, zoo, thermo_depth),
@@ -404,6 +396,17 @@ ggcorrplot::ggcorrplot(corr)
 roms_trim <- roms_dat %>% 
   # filter_at(vars(roms_temp:thermo_depth), all_vars(is.na(.)))
   filter(!if_all(c(oxygen:roms_temp, thermo_depth), ~ is.na(.))) 
+
+# identify proportion of NA by each ROMS variable
+roms_trim %>% 
+  pivot_longer(., 
+               cols = c(roms_temp, w, v, oxygen, u, zoo, thermo_depth), 
+               names_to = "roms_var") %>% 
+  filter(is.na(value)) %>% 
+  group_by(roms_var) %>% 
+  tally() %>% 
+  mutate(n / nrow(roms_trim)) 
+
 
 roms_interp <- VIM::kNN(roms_trim,
                         variable = c("roms_temp", "w", "v", "oxygen", "u", "zoo", 

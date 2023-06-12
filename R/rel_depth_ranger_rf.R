@@ -216,13 +216,12 @@ imp_dat <- data.frame(
   ) %>% 
   arrange(-val) 
 imp_dat$var_f = factor(
-  imp_dat$var#, 
-  # labels = c("Bottom Depth", "Year Day 1", "Fork Length", "Maturity", 
-  #            "UTM Y", "UTM X", "Condition", "Year Day 2", "Bottom Slope", 
-  #            "Moon Phase", "Bottom Slope", "Zooplankton",
-  #            "Shore Distance", "Temperature", "Oxygen",
-  #            "Thermocline Depth", "Day/Night", "H Current 1", "H Current 2",
-  #            "Vertical Current")
+  imp_dat$var, 
+  labels = c("Bottom Depth", "Year Day 1", "UTM X", "UTM Y", "Lunar Cycle", 
+             "Temperature", "Zooplankton", "Bottom Slope", "Maturity", 
+             "Year Day 2", "Oxygen", "Fork Length", "Shore Distance", 
+             "Thermocline Depth", "Lipid Content", "H Current 1", "H Current 2",
+             "Day/Night", "Vertical Current")
 )
 
 imp_plot <- ggplot(imp_dat, aes(x = var_f, y = val)) +
@@ -505,19 +504,19 @@ moon_map_abs <- base_plot +
   labs(title = "Lunar Illumination") +
   facet_wrap(~moon_illuminated)
 
-dn_names <- c(
-  `0` = "Day",
-  `1` = "Night"
-)
-dvm_map_abs <- base_plot +
-  geom_raster(data = pred_dat %>% 
-                filter(contrast == "dvm"), 
-              aes(x = utm_x_m, y = utm_y_m, fill = pred_med)) +
-  geom_sf(data = coast_utm) +
-  scale_fill_viridis_c(name = "Mean Depth", direction = -1) +
-  labs(title = "Diel Vertical Migration") +
-  facet_wrap(~day_night_night,
-             labeller = as_labeller(dn_names))
+# dn_names <- c(
+#   `0` = "Day",
+#   `1` = "Night"
+# )
+# dvm_map_abs <- base_plot +
+#   geom_raster(data = pred_dat %>% 
+#                 filter(contrast == "dvm"), 
+#               aes(x = utm_x_m, y = utm_y_m, fill = pred_med)) +
+#   geom_sf(data = coast_utm) +
+#   scale_fill_viridis_c(name = "Mean Depth", direction = -1) +
+#   labs(title = "Diel Vertical Migration") +
+#   facet_wrap(~day_night_night,
+#              labeller = as_labeller(dn_names))
 
 png(here::here("figs", "ms_figs_rel", "contrast_map_abs.png"), 
     height = 5.5, width = 5, 
@@ -577,19 +576,19 @@ moonlight_map <- base_plot +
   labs(title = "Moonlight Effects")
 
 
-dvm_eff <- pred_dat %>% 
-  filter(contrast == "dvm") %>% 
-  select(day_night_night, mean_bathy:shore_dist, utm_x_m, utm_y_m,
-         rel_pred_med) %>% 
-  pivot_wider(names_from = day_night_night, values_from = rel_pred_med) %>%
-  # negative is deeper at night relative to night, pos shallower at night rel to night
-  mutate(dvm_diff = (`0` - `1`))
-dvm_map <- base_plot +
-  geom_raster(data = dvm_eff, 
-              aes(x = utm_x_m, y = utm_y_m, fill = dvm_diff)) +
-  geom_sf(data = coast_utm) +
-  scale_fill_gradient2() +
-  labs(title = "DVM Effects")
+# dvm_eff <- pred_dat %>% 
+#   filter(contrast == "dvm") %>% 
+#   select(day_night_night, mean_bathy:shore_dist, utm_x_m, utm_y_m,
+#          rel_pred_med) %>% 
+#   pivot_wider(names_from = day_night_night, values_from = rel_pred_med) %>%
+#   # negative is deeper at night relative to night, pos shallower at night rel to night
+#   mutate(dvm_diff = (`0` - `1`))
+# dvm_map <- base_plot +
+#   geom_raster(data = dvm_eff, 
+#               aes(x = utm_x_m, y = utm_y_m, fill = dvm_diff)) +
+#   geom_sf(data = coast_utm) +
+#   scale_fill_gradient2() +
+#   labs(title = "DVM Effects")
 
 
 pdf(here::here("figs", "depth_ml", "spatial_contrasts_relative.pdf"))
@@ -610,23 +609,23 @@ mat_eff2 <- mat_eff %>%
 moon_eff2 <- moon_eff %>% 
   mutate(comp = "moonlight") %>% 
   select(mean_bathy:utm_y_m, comp, rel_diff = moon_diff)
-dvm_eff2 <- dvm_eff %>% 
-  mutate(comp = "dvm") %>% 
-  select(mean_bathy:utm_y_m, comp, rel_diff = dvm_diff)
+# dvm_eff2 <- dvm_eff %>% 
+#   mutate(comp = "dvm") %>% 
+#   select(mean_bathy:utm_y_m, comp, rel_diff = dvm_diff)
 
 comb_preds <- list(season_eff2,
                    mat_eff2,
-                   moon_eff2,
-                   dvm_eff2) %>% 
+                   moon_eff2#,
+                   # dvm_eff2
+                   ) %>% 
   bind_rows() %>% 
   mutate(
-    comp = factor(comp, levels = c("season", "maturity", "moonlight", "dvm"),
-                  labels = c("season", "maturity stage", "lunar cycle",
-                             "diurnal"))
+    comp = factor(comp, levels = c("season", "maturity", "moonlight"),
+                  labels = c("season", "maturity stage", "lunar cycle"))
   )
 
 png(here::here("figs", "ms_figs_rel", "contrast_map.png"), 
-    height = 6, width = 6, 
+    height = 4, width = 8, 
     units = "in", res = 250)
 base_plot +
   geom_raster(data = comb_preds, 
@@ -651,7 +650,14 @@ pred_latent <- pred_dat1 %>%
   mutate(
     mean_bathy = mean(mean_bathy),
     mean_slope = mean(mean_slope),
-    shore_dist = mean(shore_dist)
+    shore_dist = mean(shore_dist),
+    oxygen = mean(oxygen),
+    roms_temp = mean(roms_temp),
+    u = mean(u),
+    v = mean(v),
+    w = mean(w),
+    zoo = mean(zoo),
+    thermo_depth = mean(thermo_depth)
   )
 
 pred_latent_rf <- predict(ranger_rf,
@@ -865,6 +871,17 @@ yday_cond <- counterfac_tbl %>%
     axis.title.y = element_blank()
   ) 
 
+moon_cond <- counterfac_tbl %>% 
+  filter(var_in == "roms_temp") %>% 
+  pull(preds_ci) %>% 
+  as.data.frame() %>% 
+  plot_foo(data = .,
+           x = "roms_temp") +  
+  labs(x = "Year Day") +
+  theme(
+    axis.title.y = element_blank()
+  ) +
+  facet_wrap(~site)
 
 panel1 <- cowplot::plot_grid(
   yday_cond,
@@ -915,12 +932,24 @@ cowplot::plot_grid(
 dev.off()
 
 
-## unable to run as purrr:: or loop since update to ggplot
-# plot_list <- vector(length = nrow(counterfac_tbl), mode = "list")
-# for (i in 1:nrow(counterfac_tbl)) {
-#   plot_list[[i]] <- plot_foo(counterfac_tbl$preds[[i]],
-#                              x = "mean_bathy")#counterfac_tbl$var_in[[i]])  
-# }
+# unable to run as purrr:: or loop since update to ggplot
+plot_list <- vector(length = nrow(counterfac_tbl), mode = "list")
+for (i in 1:nrow(counterfac_tbl)) {
+  plot_list[[i]] <- plot_foo(counterfac_tbl$preds_ci[[i]],
+                             counterfac_tbl$var_in[[i]])
+}
+
+counterfac_tbl %>% 
+  filter(var_in == "local_day") %>% 
+  pull(preds_ci) %>% 
+  as.data.frame() %>% 
+  filter(site == "JdF") %>% 
+  plot_foo(data = .,
+           x = "local_day") +  
+  labs(x = "Year Day") +
+  theme(
+    axis.title.y = element_blank()
+  ) 
 
 # pdf for region specific relationships
 # pdf(here::here("figs", "ms_figs_rel", "bathy_counterfac_region.pdf"),

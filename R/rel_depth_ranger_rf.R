@@ -176,7 +176,7 @@ fit_obs <- ggplot() +
   geom_point(
     data = all_preds,
     aes(x = depth_real, y = mean_pred_real, fill = split_group),
-    shape = 21, alpha = 0.1
+    shape = 21, alpha = 0.025
     ) +
   labs(
     x = "Observed Depth", y = "Predicted Mean Depth"
@@ -190,6 +190,10 @@ png(here::here("figs", "ms_figs_rel", "obs_preds_rel.png"),
     height = 3, width = 6, units = "in", res = 200)
 fit_obs
 dev.off()
+
+dum_test_22$resid <- dum_test_22$mean_pred_real - dum_test_22$depth_real
+hist(dum_test_22$resid)
+
 
 # rmse of each group
 Metrics::rmse(dum$depth, dum$mean_pred)

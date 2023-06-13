@@ -107,7 +107,7 @@ train_depth_baked <- prep(depth_recipe) %>%
 #pull model attributes from top ranger
 # rf_list <- readRDS(here::here("data", "model_fits", "rf_model_comparison.rds"))
 # top_mod <- rf_list[[2]]$top_model
-
+# 
 # ranger_rf <- ranger::ranger(
 #   depth ~ .,
 #   data = train_depth_baked,
@@ -624,8 +624,8 @@ comb_preds <- list(season_eff2,
                    ) %>% 
   bind_rows() %>% 
   mutate(
-    comp = factor(comp, levels = c("season", "maturity", "moonlight"),
-                  labels = c("season", "maturity stage", "lunar cycle"))
+    comp = factor(comp, levels = c("season", "moonlight", "maturity"),
+                  labels = c("season", "lunar cycle", "maturity stage"))
   )
 
 png(here::here("figs", "ms_figs_rel", "contrast_map.png"), 
@@ -712,9 +712,9 @@ rel_latent <- base_plot +
 new_dat <- 
   data.frame(
     # points representing Ucluelet and JdF
-    site = c("JdF", "Ucluelet", "Columbia", "Gulf Islands"),
-    lat = c(48.31192, 48.95233, 46.4454, 48.48166),
-    lon = c(-124.08385, -125.7803, -124.1587, -123.19792)
+    site = c("JdF", "Ucluelet", "Columbia", "Gulf Islands", "Swiftsure"),
+    lat = c(48.31192, 48.95233, 46.4454, 48.48166, 48.588497),
+    lon = c(-124.08385, -125.7803, -124.1587, -123.19792, -124.998096)
   )
 new_dat <- sdmTMB::add_utm_columns(
   new_dat,
@@ -727,20 +727,20 @@ new_dat <- new_dat %>%
   # utm_x = mean(train_depth_baked$utm_x),
   # utm_y = mean(train_depth_baked$utm_y),
   mutate(
-    fl = mean(train_depth_baked$fl),
-    lipid = mean(train_depth_baked$lipid),
-    mean_bathy = mean(train_depth_baked$mean_bathy),
-    local_day = mean(depth_dat_raw$local_day),
-    mean_slope = mean(train_depth_baked$mean_slope),
-    shore_dist = mean(train_depth_baked$shore_dist),
-    u = mean(train_depth_baked$u),
-    v = mean(train_depth_baked$v),
-    w = mean(train_depth_baked$w),
-    zoo = mean(train_depth_baked$zoo),
-    oxygen = mean(train_depth_baked$oxygen),
-    thermo_depth = mean(train_depth_baked$thermo_depth),
-    roms_temp = mean(train_depth_baked$roms_temp),
-    moon_illuminated = mean(train_depth_baked$moon_illuminated),
+    fl = median(train_depth_baked$fl),
+    lipid = median(train_depth_baked$lipid),
+    mean_bathy = median(train_depth_baked$mean_bathy),
+    local_day = median(depth_dat_raw$local_day),
+    mean_slope = median(train_depth_baked$mean_slope),
+    shore_dist = median(train_depth_baked$shore_dist),
+    u = median(train_depth_baked$u),
+    v = median(train_depth_baked$v),
+    w = median(train_depth_baked$w),
+    zoo = median(train_depth_baked$zoo),
+    oxygen = median(train_depth_baked$oxygen),
+    thermo_depth = median(train_depth_baked$thermo_depth),
+    roms_temp = median(train_depth_baked$roms_temp),
+    moon_illuminated = median(train_depth_baked$moon_illuminated),
     day_night_night = 0.5,
     stage_mature = 0.5
   ) %>% 
@@ -811,26 +811,26 @@ pred_foo <- function(preds_in, ...) {
     )
 }
 
-# counterfac_tbl <- tibble(
-#   var_in = c("mean_bathy", "fl", "utm_x", "utm_y",
-#              "local_day", "lipid", "thermo_depth",
-#              "roms_temp", "zoo", "oxygen", "shore_dist",
-#              "moon_illuminated", "mean_slope"
-#   )) %>%
-#   mutate(
-#     pred_dat_in = purrr::map(var_in,
-#                              gen_pred_dat),
-#     # preds = purrr::map(pred_dat_in,
-#     #                    pred_foo,
-#     #                    type = "quantiles",
-#     #                    quantiles = c(0.1, 0.5, 0.9)),
-#     preds_ci = purrr::map(pred_dat_in,
-#                           pred_foo,
-#                           type = "se",
-#                           se.method = "infjack")
-#   )
-# saveRDS(counterfac_tbl,
-#         here::here("data", "counterfac_preds_ci.rds"))
+counterfac_tbl <- tibble(
+  var_in = c("mean_bathy", "fl", "utm_x", "utm_y",
+             "local_day", "lipid", "thermo_depth",
+             "roms_temp", "zoo", "oxygen", "shore_dist",
+             "moon_illuminated", "mean_slope"
+  )) %>%
+  mutate(
+    pred_dat_in = purrr::map(var_in,
+                             gen_pred_dat),
+    # preds = purrr::map(pred_dat_in,
+    #                    pred_foo,
+    #                    type = "quantiles",
+    #                    quantiles = c(0.1, 0.5, 0.9)),
+    preds_ci = purrr::map(pred_dat_in,
+                          pred_foo,
+                          type = "se",
+                          se.method = "infjack")
+  )
+saveRDS(counterfac_tbl,
+        here::here("data", "counterfac_preds_ci.rds"))
 counterfac_tbl <- readRDS(here::here("data", "counterfac_preds_ci.rds"))
 
 
@@ -838,16 +838,13 @@ counterfac_tbl <- readRDS(here::here("data", "counterfac_preds_ci.rds"))
 # plotting function
 plot_foo <- function (data, ...) {
   ggplot(data, mapping = aes(!!!ensyms(...))) +
-    geom_line(aes(y = mean#, color = site
-                  )) +
-    geom_ribbon(aes(ymin = lo, ymax = up#, fill = site
-                    ), alpha = 0.4) +
+    geom_line(aes(y = mean)) +
+    geom_ribbon(aes(ymin = lo, ymax = up), alpha = 0.4) +
     ggsidekick::theme_sleek() +
     scale_x_continuous(expand = c(0, 0)) +
     scale_y_continuous(breaks = c(0, -0.25, -0.5, -0.75, -1.0),
                        labels = c("0", "0.25", "0.5", "0.75", "1.0"),
-                       limits = c(-1, 0))# + 
-    # facet_wrap(~site)
+                       limits = c(-0.7, -0.1))
 }
 
 
@@ -875,17 +872,6 @@ yday_cond <- counterfac_tbl %>%
     axis.title.y = element_blank()
   ) 
 
-moon_cond <- counterfac_tbl %>% 
-  filter(var_in == "roms_temp") %>% 
-  pull(preds_ci) %>% 
-  as.data.frame() %>% 
-  plot_foo(data = .,
-           x = "roms_temp") +  
-  labs(x = "Year Day") +
-  theme(
-    axis.title.y = element_blank()
-  ) +
-  facet_wrap(~site)
 
 panel1 <- cowplot::plot_grid(
   yday_cond,
@@ -910,50 +896,41 @@ cowplot::plot_grid(
 dev.off()
 
 
-utmx_preds <- counterfac_tbl %>% 
-  filter(var_in == "utm_x")
-utmx_cond <- plot_foo(data = utmx_preds$preds[[1]], x = "utm_x") +  
-  labs(x = "Easting") +
-  theme(
-    axis.title.y = element_blank()
-  )
-utmy_preds <- counterfac_tbl %>% 
-  filter(var_in == "utm_y")
-utmy_cond <- plot_foo(data = utmy_preds$preds[[1]], x = "utm_y") +  
-  labs(x = "Northing") +
-  theme(
-    axis.title.y = element_blank()
-  )
-
-png(here::here("figs", "ms_figs_rel", "counterfac_utms.png"),
-    height = 2.5, width = 5.25, 
-    units = "in", res = 250)
-cowplot::plot_grid(
-  utmx_cond,
-  utmy_cond,
-  nrow = 1
-)
-dev.off()
-
-
-# unable to run as purrr:: or loop since update to ggplot
-plot_list <- vector(length = nrow(counterfac_tbl), mode = "list")
-for (i in 1:nrow(counterfac_tbl)) {
-  plot_list[[i]] <- plot_foo(counterfac_tbl$preds_ci[[i]],
-                             counterfac_tbl$var_in[[i]])
-}
-
-counterfac_tbl %>% 
-  filter(var_in == "local_day") %>% 
+temp_cond <- counterfac_tbl %>% 
+  filter(var_in == "roms_temp") %>% 
   pull(preds_ci) %>% 
   as.data.frame() %>% 
   filter(site == "JdF") %>% 
   plot_foo(data = .,
-           x = "local_day") +  
+           x = "roms_temp") +  
   labs(x = "Year Day") +
   theme(
     axis.title.y = element_blank()
   ) 
+zoo_cond <- counterfac_tbl %>% 
+  filter(var_in == "zoo") %>% 
+  pull(preds_ci) %>% 
+  as.data.frame() %>% 
+  filter(site == "JdF") %>% 
+  plot_foo(data = .,
+           x = "zoo") +  
+  labs(x = "Year Day") +
+  theme(
+    axis.title.y = element_blank()
+  ) 
+moon_cond <- counterfac_tbl %>% 
+  filter(var_in == "moon_illuminated") %>% 
+  pull(preds_ci) %>% 
+  as.data.frame() %>% 
+  filter(site == "JdF") %>% 
+  plot_foo(data = .,
+           x = "moon_illuminated") +  
+  labs(x = "Year Day") +
+  theme(
+    axis.title.y = element_blank()
+  ) 
+
+
 
 # pdf for region specific relationships
 # pdf(here::here("figs", "ms_figs_rel", "bathy_counterfac_region.pdf"),

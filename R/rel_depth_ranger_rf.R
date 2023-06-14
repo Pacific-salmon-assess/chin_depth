@@ -222,7 +222,7 @@ imp_dat <- data.frame(
   arrange(-val) 
 imp_dat$var_f = factor(
   imp_dat$var, 
-  labels = c("Bottom Depth", "Year Day 1", "UTM X", "UTM Y", "Lunar Cycle", 
+  labels = c("Year Day 1", "Bottom Depth", "UTM X", "UTM Y", "Lunar Cycle", 
              "Temperature", "Zooplankton", "Bottom Slope", "Maturity", 
              "Year Day 2", "Oxygen", "Fork Length", "Shore Distance", 
              "Thermocline Depth", "Lipid Content", "H Current 1", "H Current 2",
@@ -276,16 +276,6 @@ coast_utm <- rbind(rnaturalearth::ne_states( "United States of America",
               xmin = -127.5, ymin = 46, xmax = -122, ymax = 49.5) %>% 
   sf::st_transform(., crs = sp::CRS("+proj=utm +zone=10 +units=m"))
 
-
-# bath_grid_in <- readRDS(here::here("data", "pred_bathy_grid_utm_no_bark.RDS")) 
-# bath_grid <- bath_grid_in %>% 
-#   mutate(utm_x = X / 1000,
-#          utm_y = Y / 1000) %>% 
-#   select(utm_x, utm_y, mean_bathy = depth, max_bathy = max_depth,
-#          mean_slope = slope, shore_dist) %>% 
-#   filter(!mean_bathy > 400,
-#          !max_bathy > 500,
-#          utm_y > 5100)
 
 # REPLACED BY ESTIMATED VALUES FROM ROMS
 # calculate mean roms_variables for different seasons (using monthly averages)
@@ -425,16 +415,25 @@ stage_dat <- depth_dat_raw %>%
 
 # subset bath_grid to remove covariates defined in predictive tibble
 bath_grid_trim <- bath_grid %>% 
-  select(-c(local_day, day_night_night, moon_illuminated, det_dayx, det_dayy)) %>% 
+  select(-c(local_day, moon_illuminated, det_dayx, det_dayy)) %>% 
   group_by(season) %>% 
   group_nest()
 
+depth_dat_summer <- depth_dat_raw %>% 
+  filter(local_day > 152 & local_day < 243) 
+t_range <- c(mean(depth_dat_summer$roms_temp) - sd(depth_dat_summer$roms_temp),
+             mean(depth_dat_summer$roms_temp) + sd(depth_dat_summer$roms_temp))
+z_range <- c(mean(depth_dat_summer$zoo) - sd(depth_dat_summer$zoo),
+             mean(depth_dat_summer$zoo) + sd(depth_dat_summer$zoo))
+
 pred_tbl <- tibble(
-  contrast = rep(c("season", "maturity", "moon light", "dvm"), each = 2),
-  local_day = c(46, 211, 211, 211, 211, 211, 211, 211),
-  stage_mature = c(0, 0, 0, 1, 0.5, 0.5, 0.5, 0.5),
-  moon_illuminated = c(0.5, 0.5, 0.5, 0.5, 0, 1, 0.5, 0.5),
-  day_night_night = c(0.5, 0.5, 0.5, 0.5, 1, 1, 0, 1)
+  contrast = rep(c("season", "maturity", "moon light", "temp", "zoo"), each = 2),
+  local_day = c(46, 211, 211, 211, 211, 211, 211, 211, 211, 211),
+  stage_mature = c(0, 0, 0, 1, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5),
+  moon_illuminated = c(0.5, 0.5, 0.5, 0.5, 0, 1, 0.5, 0.5, 0.5, 0.5),
+  #leave NaNs to be replaced by bath_grid_trim except for temp and zoo contrasts
+  adj_temp = c(rep(NaN, 6), t_range[1], t_range[2], NaN, NaN),
+  adj_zoo = c(rep(NaN, 8), z_range[1], z_range[2])
 ) %>% 
   mutate(
     det_dayx = sin(2 * pi * local_day / 365),
@@ -445,6 +444,11 @@ pred_tbl <- tibble(
   left_join(., bath_grid_trim, by = "season") %>%
   left_join(., stage_dat, by = "stage_mature") %>% 
   unnest(cols = c(data)) %>% 
+  # replace temp adn zoo data for those specific contrasts
+  mutate(
+    roms_temp = ifelse(!is.na(adj_temp), adj_temp, roms_temp),
+    zoo = ifelse(!is.na(adj_zoo), adj_zoo, zoo)
+  ) %>% 
   group_by(contrast, .add = TRUE) %>% 
   group_nest(.key = "pred_grid") %>%
   mutate(
@@ -476,61 +480,47 @@ pred_dat <- pred_tbl %>%
   select(-pred_grid) %>%
   unnest(cols = preds)
 
-## Show raw differences between plots
-season_map_abs <- base_plot +
-  geom_raster(data = pred_dat %>% 
-                filter(contrast == "season"), 
-              aes(x = utm_x_m, y = utm_y_m, fill = pred_med)) +
-  geom_sf(data = coast_utm) +
-  scale_fill_viridis_c(name = "Mean Depth", direction = -1) +
-  labs(title = "Season Effects") +
-  facet_wrap(~season)
-
-mat_names <- c(
-  `0` = "Immature",
-  `1` = "Mature"
-)
-mat_map_abs <- base_plot +
-  geom_raster(data = pred_dat %>% 
-                filter(contrast == "maturity"), 
-              aes(x = utm_x_m, y = utm_y_m, fill = pred_med)) +
-  geom_sf(data = coast_utm) +
-  scale_fill_viridis_c(name = "Mean Depth", direction = -1) +
-  labs(title = "Life Stage Effects") +
-  facet_wrap(~stage_mature,
-             labeller = as_labeller(mat_names))
-
-moon_map_abs <- base_plot +
-  geom_raster(data = pred_dat %>% 
-                filter(contrast == "moon light"), 
-              aes(x = utm_x_m, y = utm_y_m, fill = pred_med)) +
-  geom_sf(data = coast_utm) +
-  scale_fill_viridis_c(name = "Mean Depth", direction = -1) +
-  labs(title = "Lunar Illumination") +
-  facet_wrap(~moon_illuminated)
-
-# dn_names <- c(
-#   `0` = "Day",
-#   `1` = "Night"
-# )
-# dvm_map_abs <- base_plot +
+# ## Show raw differences between plots
+# season_map_abs <- base_plot +
 #   geom_raster(data = pred_dat %>% 
-#                 filter(contrast == "dvm"), 
+#                 filter(contrast == "season"), 
 #               aes(x = utm_x_m, y = utm_y_m, fill = pred_med)) +
 #   geom_sf(data = coast_utm) +
 #   scale_fill_viridis_c(name = "Mean Depth", direction = -1) +
-#   labs(title = "Diel Vertical Migration") +
-#   facet_wrap(~day_night_night,
-#              labeller = as_labeller(dn_names))
-
-png(here::here("figs", "ms_figs_rel", "contrast_map_abs.png"), 
-    height = 5.5, width = 5, 
-    units = "in", res = 250)
-cowplot::plot_grid(
-  plotlist = list(season_map_abs, mat_map_abs#, moon_map_abs, dvm_map_abs
-                  ),
-  ncol = 1)
-dev.off()
+#   labs(title = "Season Effects") +
+#   facet_wrap(~season)
+# 
+# mat_names <- c(
+#   `0` = "Immature",
+#   `1` = "Mature"
+# )
+# mat_map_abs <- base_plot +
+#   geom_raster(data = pred_dat %>% 
+#                 filter(contrast == "maturity"), 
+#               aes(x = utm_x_m, y = utm_y_m, fill = pred_med)) +
+#   geom_sf(data = coast_utm) +
+#   scale_fill_viridis_c(name = "Mean Depth", direction = -1) +
+#   labs(title = "Life Stage Effects") +
+#   facet_wrap(~stage_mature,
+#              labeller = as_labeller(mat_names))
+# 
+# moon_map_abs <- base_plot +
+#   geom_raster(data = pred_dat %>% 
+#                 filter(contrast == "moon light"), 
+#               aes(x = utm_x_m, y = utm_y_m, fill = pred_med)) +
+#   geom_sf(data = coast_utm) +
+#   scale_fill_viridis_c(name = "Mean Depth", direction = -1) +
+#   labs(title = "Lunar Illumination") +
+#   facet_wrap(~moon_illuminated)
+# 
+# png(here::here("figs", "ms_figs_rel", "contrast_map_abs.png"), 
+#     height = 5.5, width = 5, 
+#     units = "in", res = 250)
+# cowplot::plot_grid(
+#   plotlist = list(season_map_abs, mat_map_abs#, moon_map_abs, dvm_map_abs
+#                   ),
+#   ncol = 1)
+# dev.off()
 
 
 ## Show relative differences 
@@ -547,10 +537,6 @@ season_map <- base_plot +
               aes(x = utm_x_m, y = utm_y_m, fill = season_diff)) +
   geom_sf(data = coast_utm) +
   scale_fill_gradient2() +
-  # scale_fill_gradientn(colours = c("red", "white", "blue"),
-  #                      values = scales::rescale(c(-3, 0, 3)),
-  #                      guide = "colorbar",
-  #                      limits = c(-3, 3)) +
   labs(title = "Season Effects")
 
 
@@ -581,56 +567,69 @@ moonlight_map <- base_plot +
   labs(title = "Moonlight Effects")
 
 
-# dvm_eff <- pred_dat %>% 
-#   filter(contrast == "dvm") %>% 
-#   select(day_night_night, mean_bathy:shore_dist, utm_x_m, utm_y_m,
-#          rel_pred_med) %>% 
-#   pivot_wider(names_from = day_night_night, values_from = rel_pred_med) %>%
-#   # negative is deeper at night relative to night, pos shallower at night rel to night
-#   mutate(dvm_diff = (`0` - `1`))
-# dvm_map <- base_plot +
-#   geom_raster(data = dvm_eff, 
-#               aes(x = utm_x_m, y = utm_y_m, fill = dvm_diff)) +
-#   geom_sf(data = coast_utm) +
-#   scale_fill_gradient2() +
-#   labs(title = "DVM Effects")
+sst_eff <- pred_dat %>%
+  filter(contrast == "temp") %>%
+  mutate(roms_temp_f = factor(roms_temp, labels = c("low", "high"))) %>% 
+  select(roms_temp_f, mean_bathy:shore_dist, utm_x_m, utm_y_m,
+         rel_pred_med) %>%
+  pivot_wider(names_from = roms_temp_f, values_from = rel_pred_med) %>%
+  # negative is deeper at higher temps, positive deeper at lower temps
+  mutate(temp_diff = (low - high))
+sst_map <- base_plot +
+  geom_raster(data = sst_eff,
+              aes(x = utm_x_m, y = utm_y_m, fill = temp_diff)) +
+  geom_sf(data = coast_utm) +
+  scale_fill_gradient2() +
+  labs(title = "SST Effects")
 
-
-pdf(here::here("figs", "depth_ml", "spatial_contrasts_relative.pdf"))
-season_map
-mat_map
-moonlight_map
-dvm_map
-dev.off()
+zoo_eff <- pred_dat %>%
+  filter(contrast == "zoo") %>%
+  mutate(zoo_f = factor(zoo, labels = c("low", "high"))) %>% 
+  select(zoo_f, mean_bathy:shore_dist, utm_x_m, utm_y_m,
+         rel_pred_med) %>%
+  pivot_wider(names_from = zoo_f, values_from = rel_pred_med) %>%
+  # negative is deeper at higher zoo conc, positive deeper at lower zoo
+  mutate(zoo_diff = (low - high))
+zoo_map <- base_plot +
+  geom_raster(data = zoo_eff,
+              aes(x = utm_x_m, y = utm_y_m, fill = zoo_diff)) +
+  geom_sf(data = coast_utm) +
+  scale_fill_gradient2() +
+  labs(title = "Zooplankton Effects")
 
 
 # combine season and maturity predictions and plot joined version
-season_eff2 <- season_eff %>% 
-  mutate(comp = "season") %>% 
-  select(mean_bathy:utm_y_m, comp, rel_diff = season_diff)
+# season_eff2 <- season_eff %>% 
+#   mutate(comp = "season") %>% 
+#   select(mean_bathy:utm_y_m, comp, rel_diff = season_diff)
 mat_eff2 <- mat_eff %>% 
   mutate(comp = "maturity") %>% 
   select(mean_bathy:utm_y_m, comp, rel_diff = mat_diff)
 moon_eff2 <- moon_eff %>% 
   mutate(comp = "moonlight") %>% 
   select(mean_bathy:utm_y_m, comp, rel_diff = moon_diff)
-# dvm_eff2 <- dvm_eff %>% 
-#   mutate(comp = "dvm") %>% 
-#   select(mean_bathy:utm_y_m, comp, rel_diff = dvm_diff)
+sst_eff2 <- sst_eff %>% 
+  mutate(comp = "roms_temp") %>% 
+  select(mean_bathy:utm_y_m, comp, rel_diff = temp_diff)
+zoo_eff2 <- zoo_eff %>% 
+  mutate(comp = "zoo") %>% 
+  select(mean_bathy:utm_y_m, comp, rel_diff = zoo_diff)
 
-comb_preds <- list(season_eff2,
-                   mat_eff2,
-                   moon_eff2#,
-                   # dvm_eff2
+comb_preds <- list(moon_eff2,
+                   sst_eff2,
+                   zoo_eff2,
+                   mat_eff2
                    ) %>% 
   bind_rows() %>% 
   mutate(
-    comp = factor(comp, levels = c("season", "moonlight", "maturity"),
-                  labels = c("season", "lunar cycle", "maturity stage"))
+    comp = factor(
+      comp, levels = c("moonlight", "roms_temp", "zoo", "maturity"),
+      labels = c("lunar cycle", "SST", "zooplankton", "maturity/size/lipid")
+    )
   )
 
 png(here::here("figs", "ms_figs_rel", "contrast_map.png"), 
-    height = 4, width = 8, 
+    height = 5.5, width = 5, 
     units = "in", res = 250)
 base_plot +
   geom_raster(data = comb_preds, 
@@ -710,24 +709,23 @@ rel_latent <- base_plot +
 
 # currently grouped by location but only present JdF; alternatively could switch
 # to mean utm
-new_dat <- 
+# new_dat <- 
+#   data.frame(
+#     # points representing Ucluelet and JdF
+#     site = c("JdF", "Ucluelet", "Columbia", "Gulf Islands", "Swiftsure"),
+#     lat = c(48.31192, 48.95233, 46.4454, 48.48166, 48.588497),
+#     lon = c(-124.08385, -125.7803, -124.1587, -123.19792, -124.998096)
+#   )
+# new_dat <- sdmTMB::add_utm_columns(
+#   new_dat,
+#   ll_names = c("lon", "lat"),
+#   utm_names = c("utm_x", "utm_y"),
+#   units = "km"
+# )
+new_dat <- #new_dat %>%
   data.frame(
-    # points representing Ucluelet and JdF
-    site = c("JdF", "Ucluelet", "Columbia", "Gulf Islands", "Swiftsure"),
-    lat = c(48.31192, 48.95233, 46.4454, 48.48166, 48.588497),
-    lon = c(-124.08385, -125.7803, -124.1587, -123.19792, -124.998096)
-  )
-new_dat <- sdmTMB::add_utm_columns(
-  new_dat,
-  ll_names = c("lon", "lat"),
-  utm_names = c("utm_x", "utm_y"),
-  units = "km"
-)
-new_dat <- new_dat %>%
-  #data.frame(
-  # utm_x = mean(train_depth_baked$utm_x),
-  # utm_y = mean(train_depth_baked$utm_y),
-  mutate(
+    utm_x = median(train_depth_baked$utm_x),
+    utm_y = median(train_depth_baked$utm_y),
     fl = median(train_depth_baked$fl),
     lipid = median(train_depth_baked$lipid),
     mean_bathy = median(train_depth_baked$mean_bathy),
@@ -764,8 +762,8 @@ gen_pred_dat <- function(var_in) {
                  seq(group_vals$min_v[i], group_vals$max_v[i], 
                      length.out = 100))
   }
-  var_seq2 <- rep(var_seq, times = length(unique(new_dat$site)))
-  # var_seq2 <- var_seq
+  # var_seq2 <- rep(var_seq, times = length(unique(new_dat$site)))
+  var_seq2 <- var_seq
   new_dat %>% 
     select(- {{ var_in }}) %>% 
     mutate(dum = var_seq2) %>% 
@@ -853,7 +851,7 @@ bathy_cond <- counterfac_tbl %>%
   filter(var_in == "mean_bathy") %>% 
   pull(preds_ci) %>% 
   as.data.frame() %>% 
-  filter(site == "JdF") %>% 
+  # filter(site == "JdF") %>% 
   plot_foo(data = .,
            x = "mean_bathy") +  
   labs(x = "Mean Bottom Depth") +
@@ -865,7 +863,7 @@ yday_cond <- counterfac_tbl %>%
   filter(var_in == "local_day") %>% 
   pull(preds_ci) %>% 
   as.data.frame() %>% 
-  filter(site == "JdF") %>% 
+  # filter(site == "JdF") %>% 
   plot_foo(data = .,
            x = "local_day") +  
   labs(x = "Year Day") +

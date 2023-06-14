@@ -111,8 +111,9 @@ train_depth_baked <- prep(depth_recipe) %>%
 # ranger_rf <- ranger::ranger(
 #   depth ~ .,
 #   data = train_depth_baked,
-#   num.trees = top_mod$param$num.trees,
-#   mtry = top_mod$tuneValue$mtry,
+#   #hyperpars based on values from top model which is not saved on all locals
+#   num.trees = 2000,
+#   mtry = 11,
 #   keep.inbag = TRUE,
 #   quantreg = TRUE,
 #   importance = "permutation"

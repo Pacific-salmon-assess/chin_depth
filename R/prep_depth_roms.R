@@ -119,9 +119,12 @@ depth_dets1 <- rbind(depth_raw, depth_h) %>%
     year = lubridate::year(date_time),
     agg = case_when(
       grepl("East Vancouver Island", cu_name) ~ "ECVI",
+      grepl("Willamette", cu_name) ~ "LowCol",
       grepl("Okanagan", cu_name) ~ "Col",
+      grepl("Upper Columbia", cu_name) ~ "Col",
       grepl("_1.", cu_name) ~ "FraserYear",
-      grepl("_0.", cu_name) ~ "FraserSub",
+      grepl("Vancouver Island", cu_name) ~ "WCVI",
+      grepl("_0.", cu_name) | agg == "Fraser" ~ "FraserSub",
       cu_name == "Lower Columbia River" ~ "LowCol",
       TRUE ~ agg
     )
@@ -613,6 +616,77 @@ depth_dat2 %>%
   facet_wrap(~vemco_code) +
   theme(legend.position = "top")
 # seems reasonable...
+
+
+## BIOLOGICAL TRAITS -----------------------------------------------------------
+
+depth_dets1 %>% 
+  select(vemco_code) %>% 
+  distinct() %>% 
+  mutate(
+    tag_year = str_split(vemco_code, "_") %>% 
+      purrr::map(., ~ .x[[2]]) %>% 
+      unlist()
+  ) %>% 
+  group_by(tag_year) %>% 
+  tally()
+
+bio_dat <- depth_dets1 %>% 
+  select(vemco_code, lipid, fl, stage, agg) %>% 
+  distinct() %>% 
+  mutate(
+    agg = fct_recode(
+      agg, "Cali." = "Cali", "Up. Col." = "Col", "Fraser\nSub." = "FraserSub",
+      "Fraser\nYear." = "FraserYear", "Low. Col." = "LowCol",
+      "Puget Sd." = "PugetSo", "Wa./Or." = "WA_OR"
+    )
+  )
+
+n_tags <- bio_dat %>% 
+  group_by(stage, agg) %>% 
+  tally()
+
+lipid_box <- ggplot(bio_dat, aes(x = agg, fill = stage)) +
+  geom_boxplot(aes(y = lipid)) +
+  scale_fill_brewer(type = "seq", palette = "Blues") +
+  ggsidekick::theme_sleek() +
+  geom_text(data = n_tags, aes(y = -Inf, label  = n),
+            position = position_dodge(width = 0.75),
+            hjust = 0.5, vjust = -0.5) +
+  labs(y = "Lipid Content (% Wet Weight)") +
+  theme(
+    legend.position = "none",
+    axis.title.x = element_blank()
+  )
+
+fl_box <- ggplot(bio_dat, aes(x = agg, fill = stage)) +
+  geom_boxplot(aes(y = fl)) +
+  scale_fill_brewer(type = "seq", palette = "Purples") +
+  ggsidekick::theme_sleek() +
+  geom_text(data = n_tags, aes(y = -Inf, label  = n),
+            position = position_dodge(width = 0.75),
+            hjust = 0.5, vjust = -0.5) +
+  ylim(c(58, 102)) +
+  labs(y = "Fork Length (cm)") +
+  theme(
+    legend.position = "none",
+    axis.title.x = element_blank()
+  )
+
+
+png(here::here("figs", "ms_figs_rel", "bio_boxplot.png"),
+    height = 6, width = 6, res = 250, units = "in")
+cowplot::plot_grid(
+  fl_box, lipid_box, ncol = 1
+)
+dev.off()
+
+
+stock_tbl <- depth_dets1 %>% 
+  select(cu_name, agg) %>% 
+  distinct() %>% 
+  arrange(agg)
+write.csv(stock_tbl, here::here("data", "stock_definitions.csv"))
 
 
 ## DETECTION/BATHY MAPS --------------------------------------------------------

@@ -35,7 +35,8 @@ time_foo <- function(x) {
 ## PREP DEPTH DATA -------------------------------------------------------------
 
 # receiver data (includes bathymetric data generated in chin_tagging repo)
-rec <- readRDS(here::here("data", "receivers_all.RDS"))$rec_all 
+rec_full <- readRDS(here::here("data", "receivers_all.RDS"))
+rec <- rec_full$rec_all 
 
 dum <- rec %>% 
   select(station_latitude, station_longitude, mean_depth) %>% 
@@ -51,13 +52,13 @@ rec %>%
          mean_depth)
 
 # life stage estimates
-dum <- readRDS(here::here("data", "acousticOnly_GSI.RDS"))
+chin_in <- readRDS(here::here("data", "acousticOnly_GSI.RDS"))
 stage_dat <- readRDS(here::here("data", "agg_lifestage_df.RDS")) %>% 
   left_join(., 
-            dum %>% dplyr::select(vemco_code = acoustic_year, lipid, 
-                                  cu_name), 
+            chin_in %>% dplyr::select(vemco_code = acoustic_year, acoustic_type, 
+                                  lipid,  cu_name), 
             by = "vemco_code") %>% 
-  select(vemco_code, fl, stage_predicted, lipid, cu_name, agg)  
+  select(vemco_code, acoustic_type, fl, stage_predicted, lipid, cu_name, agg)  
 
 # ~2% of tags lack energy density estimates, impute
 interp_stage_dat <- VIM::kNN(stage_dat, k = 5) %>% 
@@ -73,8 +74,9 @@ depth_raw <- readRDS(here::here("data", "detections_all.RDS")) %>%
   left_join(., 
             rec %>% 
               select(receiver = receiver_name, trim_sn, mean_depth:shore_dist),
-            by = "receiver") %>% 
-    select(vemco_code, stage, fl, lipid, cu_name, agg, date_time, latitude, 
+            by = "receiver") %>%
+  filter(acoustic_type == "V13P") %>%
+  select(vemco_code, stage, fl, lipid, cu_name, agg, date_time, latitude, 
          longitude, receiver_name = receiver, trim_sn, region, 
          mean_bathy = mean_depth, max_bathy = max_depth, mean_slope, mean_aspect,
          shore_dist, depth)
@@ -725,6 +727,19 @@ base_rec_plot <- ggplot() +
          size = guide_legend()) 
 
 
+# identify receivers w/ no detections
+blank_rec <- rec_full$dup_rec_all %>%
+  mutate(year = as.numeric(field_season)) %>% 
+  filter(
+    !(station_latitude %in% depth_dat2$latitude & 
+        station_longitude %in% depth_dat2$longitude),
+    #exclude regions not incldued in depth analysis
+    region %in% depth_dets1$region,
+    # exclude SOBaD redeployments that extended to 2023 to avoid dups
+    !recover_year == "2023"
+  ) 
+
+
 # calculate number of detections by receiver
 rec_dets <- depth_dat2 %>% 
   group_by(latitude, longitude, trim_sn, year) %>% 
@@ -734,6 +749,10 @@ rec_dets <- depth_dat2 %>%
   ) 
 
 rec_plot_det <- base_rec_plot +
+  geom_point(data = blank_rec, 
+             aes(x = station_longitude, y = station_latitude),
+             shape = 3, 
+             inherit.aes = FALSE) +
   geom_point(data = rec_dets,
              aes(x = longitude, y = latitude, size = n_dets),
              shape = 21, fill = "red", alpha = 0.4,
@@ -750,6 +769,10 @@ rec_depth <- depth_dat2 %>%
   ) 
 
 rec_plot_depth <- base_rec_plot + 
+  geom_point(data = blank_rec, 
+             aes(x = station_longitude, y = station_latitude),
+             shape = 3, 
+             inherit.aes = FALSE) +
   geom_point(data = rec_depth,
              aes(x = longitude, y = latitude, size = mean_depth),
              shape = 21, fill = "blue", alpha = 0.2,
@@ -769,7 +792,6 @@ dev.off()
 
 
 ## Bathymetry Maps
-# TODO: crop with utm for cleaner plots
 coast2 <- rbind(rnaturalearth::ne_states( "United States of America",
                                           returnclass = "sf"),
                 rnaturalearth::ne_states( "Canada", returnclass = "sf"))
@@ -803,11 +825,12 @@ loc_dat <- data.frame(
   site = c("U", "PR")
 )
 
+
 # bounding box representing zone of predictions
 domain_coords <- sf::st_coordinates(coast_utm_rec) %>% as.data.frame()
 bb_coords <- sf::st_coordinates(coast_utm_bathy) %>% as.data.frame()
 
-# receivers 
+# receiver location data 
 rec_locs <- rec %>%
   filter(marine == "yes",
          !station_latitude < 46) %>%
@@ -819,6 +842,34 @@ rec_locs <- sdmTMB::add_utm_columns(
   units = "m"
 )
 
+
+# release location data 
+dfo_releases <- chin_in %>% 
+  filter(acoustic_type == "V13P") %>% 
+  select(vemco_code = acoustic_year, lat, lon, year)
+ubc_releases <- hendricks_bio %>% 
+  filter(
+    # remove missing latitude and one individual w/ incorrect location
+    !is.na(lat),
+    !(lat > 48.6 & lon > -124.6)
+  ) %>% 
+  mutate(
+    year = str_split(vemco_code, "_") %>% 
+      purrr::map(., ~ .x[2]) %>% 
+      unlist(),
+    # shift latitude to account for differences in projection (moves off land)
+    lat = lat - 0.01
+  ) %>% 
+  select(vemco_code, lat, lon, year)
+
+releases <- rbind(dfo_releases, ubc_releases)
+releases <- sdmTMB::add_utm_columns(
+  releases, 
+  ll_names = c("lon", "lat"),
+  units = "m"
+)
+
+
 # blank base map
 blank_p <- ggplot() + 
   ggsidekick::theme_sleek() +
@@ -826,6 +877,7 @@ blank_p <- ggplot() +
         legend.position = "top") +
   scale_x_continuous(expand = c(0, 0)) +
   scale_y_continuous(expand = c(0, 0))
+
 
 # make plots
 rec_plot <-  blank_p +
@@ -835,6 +887,12 @@ rec_plot <-  blank_p +
                 ymax = max(bb_coords$Y),
                 ymin = min(bb_coords$Y) + 5000),
             color = "black", fill = "transparent", lty = 2) + 
+  # rectangle for release locations
+  geom_rect(aes(xmax = max(releases$X) + 2000,
+                xmin = min(releases$X) - 2000,
+                ymax = max(releases$Y) + 2000,
+                ymin = min(releases$Y) - 2000),
+            color = "black", fill = "transparent", lty = 3) +
   geom_label(data = labs_dat, aes(x = X, y = Y, label = lab), size = 3) +
   geom_point(data = rec_locs, aes(x = X, y = Y), 
              fill = "red", shape = 21, alpha = 0.5) +
@@ -889,7 +947,43 @@ bathy_vars
 dev.off()
 
 
+## release location maps
+rel_locs <- blank_p +
+  geom_sf(data = coast_utm_rec, fill = "darkgrey") +
+  geom_point(data = releases, aes(x = X, y = Y, fill = year), 
+             shape = 21, alpha = 0.7) +
+  scale_fill_viridis_d(option = "A") +
+  coord_sf(ylim = c(min(releases$Y) - 2000, max(releases$Y) + 2000),
+           xlim = c(min(releases$X) - 2000, max(releases$X) + 2000))
+
+png(here::here("figs", "ms_figs_rel", "release_locations.png"),
+    height = 3, width = 6.5, res = 250, units = "in")
+rel_locs
+dev.off()
+
+
 ## DEPTH PROFILES --------------------------------------------------------------
+
+bottom_dot <- ggplot(depth_dat2 %>% 
+         filter(
+           !is.na(roms_temp)
+         )) +
+  geom_point(aes(x = max_bathy, y = -1 * pos_depth, fill = stage),
+             shape = 21, alpha = 0.3) +
+  geom_abline(aes(intercept = 0, slope = -1)) +
+  labs(y = "Observed Depth (m)", 
+       x = "Maximum Bottom Depth\nWithin Detection Radius (m)") +
+  ggsidekick::theme_sleek() +
+  scale_y_continuous(
+    breaks = c(0, -100, -200, -300), 
+    labels = seq(0, 300, by = 100)
+  )
+
+png(here::here("figs", "ms_figs_rel", "depth_vs_bathy.png"),
+    height = 3, width = 6.5, res = 250, units = "in")
+bottom_dot
+dev.off()
+
 
 # individual depth distributions by time and terminal location
 depth_dat2 <- depth_raw %>%

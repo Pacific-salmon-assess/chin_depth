@@ -717,7 +717,9 @@ depth_dat2 <- readRDS(here::here("data", "depth_dat_nobin.RDS")) %>%
 base_rec_plot <- ggplot() +
   geom_sf(data = coast_plotting, color = "black", fill = "white") +
   #removes extra border
-  scale_x_continuous(expand = c(0, 0)) +
+  scale_x_continuous(
+    breaks = c(-127, -125, -123), 
+    expand = c(0, 0)) +
   scale_y_continuous(expand = c(0, 0)) +
   coord_sf(xlim = c(-128, -122.15), ylim = c(46, 51.25)) +
   labs(x = "", y = "") +
@@ -734,12 +736,13 @@ blank_rec <- rec_full$dup_rec_all %>%
   filter(
     !(station_latitude %in% depth_dat2$latitude & 
         station_longitude %in% depth_dat2$longitude),
+    !project_name == "LakeWashington",
+    marine == "yes",
     #exclude regions not incldued in depth analysis
     region %in% depth_dets1$region,
     # exclude SOBaD redeployments that extended to 2023 to avoid dups
     !recover_year == "2023"
   ) 
-
 
 # calculate number of detections by receiver
 rec_dets <- depth_dat2 %>% 
@@ -758,14 +761,19 @@ rec_plot_det <- base_rec_plot +
              aes(x = longitude, y = latitude, size = n_dets),
              shape = 21, fill = "red", alpha = 0.4,
              inherit.aes = FALSE) +
-  scale_size_continuous(name = "Number of \nDetections") 
+  scale_size_continuous(
+    name = "Number of \nDetections",
+    breaks = c(5, 50, 150, 250, 500),
+    labels = c("5", "50", "150", "250", "500")
+  ) +
+  theme(legend.position = "top")
 
 
 # calculate mean depth by by receiver
 rec_depth <- depth_dat2 %>% 
   group_by(latitude, longitude, trim_sn, year) %>% 
   summarize(
-    mean_depth = mean(pos_depth),
+    med_depth = median(pos_depth),
     .groups = "drop"
   ) 
 
@@ -775,19 +783,24 @@ rec_plot_depth <- base_rec_plot +
              shape = 3, 
              inherit.aes = FALSE) +
   geom_point(data = rec_depth,
-             aes(x = longitude, y = latitude, size = mean_depth),
+             aes(x = longitude, y = latitude, size = med_depth),
              shape = 21, fill = "blue", alpha = 0.2,
              inherit.aes = FALSE) +
-  scale_size_continuous(name = "Mean Depth of \nDetections") 
+  scale_size_continuous(
+    name = "Median Depth\nof Detections (m)",
+    breaks = c(5, 50, 100, 175, 250),
+    labels = c("5", "50", "100", "175", "250")
+    ) +
+  theme(legend.position = "top")
 
 
 png(here::here("figs", "ms_figs_rel", "rec_locations_det.png"),
-    height = 5, width = 5, res = 250, units = "in")
+    height = 8.5, width = 8, res = 250, units = "in")
 rec_plot_det
 dev.off()
 
 png(here::here("figs", "ms_figs_rel", "rec_locations_depth.png"),
-    height = 5, width = 5, res = 250, units = "in")
+    height = 8.5, width = 8, res = 250, units = "in")
 rec_plot_depth
 dev.off()
 
@@ -896,7 +909,7 @@ rec_plot <-  blank_p +
             color = "black", fill = "transparent", lty = 3) +
   geom_label(data = labs_dat, aes(x = X, y = Y, label = lab), size = 3) +
   geom_point(data = rec_locs, aes(x = X, y = Y), 
-             fill = "red", shape = 21, alpha = 0.5) +
+             fill = "red", shape = 21, alpha = 0.5, size = 0.9) +
   geom_point(data = loc_dat, aes(x = X, y = Y, shape = site), fill = "blue",
              size = 1.5) +
   scale_shape_manual(values = c(23, 24), guide = NULL) +
@@ -907,7 +920,7 @@ depth_plot <- blank_p +
               aes(x = X, y = Y, fill = depth)) +
   geom_sf(data = coast_utm_bathy, fill = "darkgrey") +
   scale_shape_manual(values = c(21, 24), guide = NULL) +
-  scale_fill_viridis_c(name = "Depth (m)", direction = -1)  +
+  scale_fill_viridis_c(name = "Bottom\nDepth (m)", direction = -1)  +
   theme(legend.position = "right",
         axis.text = element_blank()) +
   coord_sf(ylim = c(min(bb_coords$Y) + 10000, 5480000),

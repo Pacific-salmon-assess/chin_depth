@@ -490,6 +490,7 @@ moon_data <- oce::moonAngle(depth_dat$date_time,
                             depth_dat$longitude, 
                             depth_dat$latitude)$illuminatedFraction
 
+
 # add sunrise/sunset data
 sun_data <- data.frame(date = as.Date(depth_dat$date_time_local),
                        lat = depth_dat$latitude, 

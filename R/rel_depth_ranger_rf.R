@@ -20,9 +20,15 @@ library(randomForest)
 
 
 depth_dat_raw1 <- readRDS(
-  here::here("data", "depth_dat_nobin.RDS")) %>% 
+  here::here("data", "depth_dat_nobin.RDS")) %>%
   # approximately 6k detections have no available ROMS data; exclude for now
   filter(!is.na(roms_temp))
+
+# depth_dat_raw1 <- readRDS(
+#   here::here("data", "depth_dat_nobin_FULL.RDS")) %>% 
+#   # approximately 6k detections have no available ROMS data; exclude for now
+#   filter(!is.na(mean_slope),
+#          !is.na(roms_temp))
 
 
 # remove 2022 tag releases (~6k dets) for training model
@@ -105,23 +111,24 @@ train_depth_baked <- prep(depth_recipe) %>%
          dplyr::select(-ind_block, -max_bathy))
 
 #pull model attributes from top ranger
-# rf_list <- readRDS(here::here("data", "model_fits", "rf_model_comparison.rds"))
-# top_mod <- rf_list[[2]]$top_model
-# 
-# ranger_rf <- ranger::ranger(
-#   depth ~ .,
-#   data = train_depth_baked,
-#   #hyperpars based on values from top model which is not saved on all locals
-#   num.trees = 2000,
-#   mtry = 11,
-#   keep.inbag = TRUE,
-#   quantreg = TRUE,
-#   importance = "permutation"
-# )
-# 
-# saveRDS(ranger_rf,
-#         here::here("data", "model_fits", "relative_rf_ranger.rds"))
+rf_list <- readRDS(here::here("data", "model_fits", "rf_model_comparison.rds"))
+top_mod <- rf_list[[2]]$top_model
+
+ranger_rf <- ranger::ranger(
+  depth ~ .,
+  data = train_depth_baked,
+  #hyperpars based on values from top model which is not saved on all locals
+  num.trees = 2000,
+  mtry = 11,
+  keep.inbag = TRUE,
+  quantreg = TRUE,
+  importance = "permutation"
+)
+
+saveRDS(ranger_rf,
+        here::here("data", "model_fits", "relative_rf_ranger.rds"))
 ranger_rf <- readRDS(here::here("data", "model_fits", "relative_rf_ranger.rds"))
+ranger_rf <- readRDS(here::here("data", "model_fits", "relative_rf_ranger_FULL.rds"))
 
 
 # CHECK PREDS ------------------------------------------------------------------
@@ -229,7 +236,7 @@ imp_dat$var_f = factor(
              "Day/Night", "Vertical Current")
 )
 
-imp_plot <- ggplot(imp_dat, aes(x = var_f, y = val)) +
+imp_plot <- ggplot(imp_dat, aes(x = var, y = val)) +
   geom_point(aes(fill = category), shape = 21, size = 2) +
   ggsidekick::theme_sleek() +
   labs(x = "Covariate", y = "Relative Importance") +
@@ -843,7 +850,7 @@ plot_foo <- function (data, ...) {
     scale_x_continuous(expand = c(0, 0)) +
     scale_y_continuous(breaks = c(0, -0.25, -0.5, -0.75, -1.0),
                        labels = c("0", "0.25", "0.5", "0.75", "1.0"),
-                       limits = c(-0.7, -0.1))
+                       limits = c(-0.9, 0))
 }
 
 
@@ -899,10 +906,9 @@ temp_cond <- counterfac_tbl %>%
   filter(var_in == "roms_temp") %>% 
   pull(preds_ci) %>% 
   as.data.frame() %>% 
-  filter(site == "JdF") %>% 
+  # filter(site == "JdF") %>% 
   plot_foo(data = .,
            x = "roms_temp") +  
-  labs(x = "Year Day") +
   theme(
     axis.title.y = element_blank()
   ) 
@@ -910,10 +916,8 @@ zoo_cond <- counterfac_tbl %>%
   filter(var_in == "zoo") %>% 
   pull(preds_ci) %>% 
   as.data.frame() %>% 
-  filter(site == "JdF") %>% 
   plot_foo(data = .,
            x = "zoo") +  
-  labs(x = "Year Day") +
   theme(
     axis.title.y = element_blank()
   ) 
@@ -921,10 +925,8 @@ moon_cond <- counterfac_tbl %>%
   filter(var_in == "moon_illuminated") %>% 
   pull(preds_ci) %>% 
   as.data.frame() %>% 
-  filter(site == "JdF") %>% 
   plot_foo(data = .,
            x = "moon_illuminated") +  
-  labs(x = "Year Day") +
   theme(
     axis.title.y = element_blank()
   ) 

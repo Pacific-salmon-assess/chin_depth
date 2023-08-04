@@ -136,6 +136,34 @@ depth_dets1 <- rbind(depth_raw, depth_h) %>%
          !is.na(depth))
 
 
+## CHECK FOR DEAD TAGS ---------------------------------------------------------
+# 
+# ## some tags detected simultaneously at multiple receivers at the same time; to 
+# # resolve 
+# 
+# set.seed(123)
+# 
+# deaths <- depth_dets1 %>% 
+#   group_by(vemco_code, receiver_name) %>% 
+#   mutate(nn = n()) %>% 
+#   filter(
+#     nn > 300
+#   ) 
+# 
+# 
+# ggplot() +
+#   geom_point(data = depth_dets1 %>% filter(vemco_code %in% deaths$vemco_code),
+#              aes(x = date_time, y = depth, fill = region), 
+#              shape = 21) +
+#   facet_wrap(~vemco_code, scales = "free_x") +
+#   ggsidekick::theme_sleek() +
+#   theme(
+#     legend.position = "none"
+#   )
+# 
+# # no evidence that fish died within detection distance of receiver
+  
+
 ## EXPORT STATIONS -------------------------------------------------------------
 
 ## Three different ROMS datasets
@@ -359,44 +387,42 @@ roms_dat[roms_dat == "-999"] <- NA
 
 
 # plot locations of missing stations
-# coast <- readRDS(here::here("data",
-#                             "coast_major_river_sf_plotting.RDS")) %>%
-#   sf::st_crop(.,
-#               xmin = -127.5, ymin = 46, xmax = -122, ymax = 49.5)
-# 
-# plot_missing_foo <- function(var = "roms_temp") {
-#   dum <- roms_dat %>%
-#     filter(is.na(UQ(sym(var)))) %>%
-#     select(month, latitude, longitude, {{ var }}) %>%
-#     distinct()
-# 
-#   ggplot() +
-#     geom_sf(data = coast) +
-#     geom_point(data = dum, aes(x = longitude, y = latitude), shape = 21,
-#                colour = "red") +
-#     ggsidekick::theme_sleek()
-# }
-# 
-# plot_missing_foo(var = "u")
-# plot_missing_foo(var = "u") +
-#   facet_wrap(~month)
-# plot_missing_foo(var = "u") +
-#   facet_wrap(~year)
+coast <- readRDS(here::here("data",
+                            "coast_major_river_sf_plotting.RDS")) %>%
+  sf::st_crop(.,
+              xmin = -127.5, ymin = 46, xmax = -122, ymax = 49.5)
 
+plot_missing_foo <- function(var = "roms_temp") {
+  dum <- roms_dat %>%
+    mutate(missing = ifelse(is.na(UQ(sym(var))), "yes", "no")) %>%
+    select(month, latitude, longitude, {{ var }}, missing) %>%
+    distinct()
 
-# check correlations among roms vars
-corr <- cor(roms_dat %>%
-              select(roms_temp, w, v, oxygen, u, zoo, thermo_depth),
-            use = "pairwise.complete.obs")
-ggcorrplot::ggcorrplot(corr)
+  ggplot() +
+    geom_sf(data = coast) +
+    geom_point(data = dum, aes(x = longitude, y = latitude, fill = missing),
+               shape = 21, alpha = 0.4) +
+    ggsidekick::theme_sleek()
+}
+
+plot_missing_foo(var = "u")
+plot_missing_foo(var = "u") +
+  facet_wrap(~month)
+plot_missing_foo(var = "u") +
+  facet_wrap(~year)
+# 
+# 
+# # check correlations among roms vars
+# corr <- cor(roms_dat %>%
+#               select(roms_temp, w, v, oxygen, u, zoo, thermo_depth),
+#             use = "pairwise.complete.obs")
+# ggcorrplot::ggcorrplot(corr)
 
 
 # missing values due to a) unavailable data and b) delays between ROMS pulls
 
 # join with receiver data (includes bathymetric variables) and impute using
 # k nearest neighbors
-# NOTE not all current ROMS pulls have associated receiver data but this will be 
-# corrected by next extraction
 # NOTE restricted to stations where at least some roms data were produced
 roms_trim <- roms_dat %>% 
   # filter_at(vars(roms_temp:thermo_depth), all_vars(is.na(.)))
@@ -451,6 +477,32 @@ depth_dat <- depth_dets1 %>%
     by = c("latitude", "longitude", "day", "month", "year", "hour"),
     
   ) %>% 
+  ## some tags detected simultaneously at multiple receivers at the same time; 
+  # to resolve take average of spatial variables, including roms data  
+  group_by(vemco_code, date_time) %>% 
+  mutate(
+    nn = n(),
+    rep_number = row_number(),
+    mean_bathy = ifelse(nn > 1, mean(mean_bathy), mean_bathy),
+    max_bathy = ifelse(nn > 1, mean(max_bathy), max_bathy),
+    mean_slope = ifelse(nn > 1, mean(mean_slope), mean_slope),
+    mean_aspect = ifelse(nn > 1, mean(mean_aspect), mean_aspect),
+    shore_dist = ifelse(nn > 1, mean(shore_dist), shore_dist),
+    depth = ifelse(nn > 1, mean(depth), depth),
+    utm_x = ifelse(nn > 1, mean(utm_x), utm_x),
+    utm_y = ifelse(nn > 1, mean(utm_y), utm_y),
+    roms_temp = ifelse(nn > 1, mean(roms_temp), roms_temp),
+    w = ifelse(nn > 1, mean(w), w),
+    v = ifelse(nn > 1, mean(v), v),
+    oxygen = ifelse(nn > 1, mean(oxygen), oxygen),
+    u = ifelse(nn > 1, mean(u), u),
+    zoo = ifelse(nn > 1, mean(zoo), zoo),
+    thermo_depth = ifelse(nn > 1, mean(thermo_depth), thermo_depth)
+  ) %>% 
+  filter(
+    rep_number == "1"
+  ) %>% 
+  ungroup() %>% 
   mutate(
     start_time = min(date_time),
     timestamp = difftime(start_time, date_time, units = "mins"),
@@ -460,7 +512,6 @@ depth_dat <- depth_dets1 %>%
     # corrections for when depth deeper than max bathy depth
     depth_diff = max_bathy - depth,
     depth = ifelse(depth_diff > -2.5 & depth_diff < 0, max_bathy - 0.5, depth),
-    # depth_flag2 = ifelse(depth_diff > -2.5 & depth_diff < 0, 1, 0),
     # misc timestamp cleaning
     date_time_local = lubridate::with_tz(date_time, 
                                          tzone = "America/Los_Angeles"),
@@ -483,6 +534,14 @@ depth_dat <- depth_dets1 %>%
     depth < max_bathy
   ) %>% 
   droplevels()
+
+
+
+depth_dets1 %>% 
+  group_by(vemco_code, date_time) %>% 
+  mutate(nn = n()) %>% 
+  filter(nn > 1) %>% 
+  mutate(dup_number = row_number())
 
 
 # add moon data

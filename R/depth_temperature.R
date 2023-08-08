@@ -112,13 +112,14 @@ temp_bin_plot <- depth_bin %>%
   geom_raster(aes(x = temp_bin, y = depth_bin, fill = n)) +
   scale_fill_viridis_c(
     trans = "sqrt",
-    name = "Number of\nDetections"
+    name = "Number of\nDetections",
+    breaks = c(50, 250, 450, 650, 850)
   ) +
   facet_grid(region_f~season) +
   ggsidekick::theme_sleek() +
-  scale_y_discrete(name = "Depth", 
+  scale_y_discrete(name = "Depth (m)", 
                    breaks = seq(-300, 0, by = 25)) +
-  scale_x_discrete(name = "Temperature", 
+  scale_x_discrete(name = "Temperature (C)", 
                    breaks = seq(6, 24, by = 2)) +
   theme(axis.text.x = element_text(angle = 45))
 
@@ -137,13 +138,14 @@ oxy_bin_plot <- depth_bin %>%
   scale_fill_viridis_c(
     trans = "sqrt",
     name = "Number of\nDetections",
-    option = "A"
+    option = "A",
+    breaks = c(50, 250, 450, 650, 850)
   ) +
   facet_grid(region_f~season) +
   ggsidekick::theme_sleek() +
-  scale_y_discrete(name = "Depth", 
+  scale_y_discrete(name = "Depth (m)", 
                    breaks = seq(-300, 0, by = 25)) +
-  scale_x_discrete(name = "Oxygen", 
+  scale_x_discrete(name = "Oxygen (mg/l)", 
                    breaks = seq(1, 12, by = 1)) +
   theme(axis.text.x = element_text(angle = 45))
 

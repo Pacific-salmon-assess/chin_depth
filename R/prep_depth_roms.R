@@ -93,15 +93,12 @@ calc_lipid <- function(mean_energy) {
     -1.973 + 6.758 * 1.059 + ((6.758 - 6.202) * (mean_energy - 1.059))
   )
 }
+
 hendricks_bio <- readRDS(here::here("data", "hendricks_chin_dat.RDS")) %>% 
   mutate(
     lipid = calc_lipid(exp(mean_log_e))
   )
 
-
-## FIT DATA TO STAGE MODEL ##
-
-# estimate stage in Hendricks dataset
 depth_h <- readRDS(here::here("data", "hendricks_depth_dets.RDS")) %>% 
   mutate(trim_sn = as.character(receiver_sn),
          week = lubridate::week(date_time)) %>% 
@@ -775,53 +772,55 @@ saveRDS(pred_roms_out %>%
 
 ## BIOLOGICAL TRAITS -----------------------------------------------------------
 
-stage_dat %>%
-  filter(grepl("V13P", acoustic_type)) %>% 
-  glimpse()
-hendricks_bio %>% 
-  glimpse()
-
-depth_dets1 %>% 
-  select(vemco_code) %>% 
-  distinct() %>% 
-  mutate(
-    tag_year = str_split(vemco_code, "_") %>% 
-      purrr::map(., ~ .x[[2]]) %>% 
-      unlist()
-  ) %>% 
-  group_by(tag_year) %>% 
-  tally()
-
 bio_dat <- rbind(
   stage_dat %>% 
     filter(grepl("V13P", acoustic_type)) %>% 
-    select(vemco_code, lipid, fl, stage = stage_predicted, agg),
+    select(vemco_code, lipid, fl, stage = stage_predicted, cu_name, agg),
   hendricks_bio %>% 
-    left_join(., 
-              depth_h %>% 
-                select(vemco_code, stage) %>% 
-                distinct(),
-              by = "vemco_code") %>% 
-    select(vemco_code, lipid, fl, stage, agg = agg_name)
+    # left_join(., 
+    #           hendricks_bio %>% 
+    #             select(vemco_code, stage) %>% 
+    #             distinct(),
+    #           by = "vemco_code") %>% 
+    select(vemco_code, lipid, fl, stage, cu_name, agg)
 ) %>% 
   mutate(
-    stage = ifelse(is.na(stage)),
+    agg = case_when(
+      grepl("East Vancouver Island", cu_name) ~ "ECVI",
+      grepl("Willamette", cu_name) ~ "LowCol",
+      grepl("Okanagan", cu_name) ~ "Col",
+      grepl("Upper Columbia", cu_name) ~ "Col",
+      grepl("_1.", cu_name) ~ "FraserYear",
+      grepl("Vancouver Island", cu_name) ~ "WCVI",
+      grepl("_0.", cu_name) | agg == "Fraser" ~ "FraserSub",
+      cu_name == "Lower Columbia River" ~ "LowCol",
+      TRUE ~ agg
+    ),
     agg = fct_recode(
-      agg, "Cali." = "Cali", "Up. Col." = "Col", "Fraser\nSub." = "FraserSub",
-      "Fraser\nYear." = "FraserYear", "Low. Col." = "LowCol",
-      "Puget Sd." = "PugetSo", "Wa./Or." = "WA_OR"
+      agg, "Cali." = "Cali", "Upriver\nCol." = "Col", "Fraser\nSub." = "FraserSub",
+      "Fraser\nYear." = "FraserYear", "Lower\nCol." = "LowCol",
+      "Puget\nSound" = "PugetSo", "WA/OR." = "WA_OR"
     )
   )
 
-n_tags <- bio_dat %>% 
+n_tags_fl <- bio_dat %>% 
+  filter(!is.na(fl)) %>% 
+  group_by(stage, agg) %>% 
+  tally()
+n_tags_lipid <- bio_dat %>% 
+  filter(!is.na(lipid)) %>% 
   group_by(stage, agg) %>% 
   tally()
 
-lipid_box <- ggplot(bio_dat, aes(x = agg, fill = stage)) +
+lipid_box <- ggplot(
+  bio_dat %>% 
+    filter(!is.na(lipid)), 
+  aes(x = agg, fill = stage)
+) +
   geom_boxplot(aes(y = lipid)) +
   scale_fill_brewer(type = "seq", palette = "Blues") +
   ggsidekick::theme_sleek() +
-  geom_text(data = n_tags, aes(y = -Inf, label  = n),
+  geom_text(data = n_tags_lipid, aes(y = -Inf, label  = n),
             position = position_dodge(width = 0.75),
             hjust = 0.5, vjust = -0.5) +
   labs(y = "Lipid Content (% Wet Weight)") +
@@ -830,14 +829,18 @@ lipid_box <- ggplot(bio_dat, aes(x = agg, fill = stage)) +
     axis.title.x = element_blank()
   )
 
-fl_box <- ggplot(bio_dat, aes(x = agg, fill = stage)) +
+fl_box <- ggplot(
+  bio_dat %>% 
+    filter(!is.na(fl)), 
+  aes(x = agg, fill = stage)
+) +
   geom_boxplot(aes(y = fl)) +
   scale_fill_brewer(type = "seq", palette = "Purples") +
   ggsidekick::theme_sleek() +
-  geom_text(data = n_tags, aes(y = -Inf, label  = n),
+  geom_text(data = n_tags_fl, aes(y = -Inf, label  = n),
             position = position_dodge(width = 0.75),
             hjust = 0.5, vjust = -0.5) +
-  ylim(c(58, 102)) +
+  ylim(c(56, 102)) +
   labs(y = "Fork Length (cm)") +
   theme(
     legend.position = "none",
@@ -858,6 +861,100 @@ stock_tbl <- depth_dets1 %>%
   distinct() %>% 
   arrange(agg)
 write.csv(stock_tbl, here::here("data", "stock_definitions.csv"))
+
+
+## DEPTH SCATTER ---------------------------------------------------------------
+
+bottom_dot <- ggplot(depth_dat2 %>% 
+                       filter(
+                         !is.na(roms_temp)
+                       )) +
+  geom_point(aes(x = max_bathy, y = -1 * pos_depth, fill = stage),
+             shape = 21, alpha = 0.3) +
+  geom_abline(aes(intercept = 0, slope = -1)) +
+  labs(y = "Observed Depth (m)", 
+       x = "Maximum Bottom Depth\nWithin Detection Radius (m)") +
+  ggsidekick::theme_sleek() +
+  scale_y_continuous(
+    breaks = c(0, -100, -200, -300), 
+    labels = seq(0, 300, by = 100)
+  )
+
+png(here::here("figs", "ms_figs_rel", "depth_vs_bathy.png"),
+    height = 3, width = 6.5, res = 250, units = "in")
+bottom_dot
+dev.off()
+
+
+## MISCELLANEOUS DATA  ---------------------------------------------------------
+
+# number of immature and mature fish tagged
+bio_dat %>% 
+  group_by(stage) %>%
+  tally()
+
+depth_dat_raw1 %>% 
+  select(vemco_code, stage) %>% 
+  distinct() %>% 
+  group_by(stage) %>% 
+  tally()
+
+# number of detections per tag
+n_det_dat <- depth_dat2 %>% 
+  group_by(vemco_code) %>% 
+  tally() 
+
+# calculate timespan overwhich detections provided (merge with depth_raw to 
+# include release data)
+n_day_dat <- rbind(
+  depth_raw %>% 
+    filter(receiver_name == "release") %>%
+    mutate(
+      date_time_local = lubridate::with_tz(
+        date_time, tzone = "America/Los_Angeles"
+      )                                 
+    ) %>% 
+    select(vemco_code, date_time_local),
+  depth_dat2 %>% 
+    select(vemco_code, date_time_local)
+) %>% 
+  group_by(vemco_code) %>% 
+  summarize(
+    min_time = min(date_time_local),
+    max_time = max(date_time_local)
+  ) %>% 
+  mutate(
+    timespan = difftime(max_time, min_time, units = "days")
+  ) 
+
+det_hist <- ggplot(n_det_dat, aes(x = n)) +
+  geom_histogram() + 
+  ggsidekick::theme_sleek() +
+  labs(x = "Detections") +
+  theme(axis.title.y = element_blank())
+
+day_hist <- ggplot(n_day_dat, aes(x = as.numeric(timespan))) +
+  geom_histogram() + 
+  ggsidekick::theme_sleek() +
+  labs(x = "Days Between Release and Last Detection") +
+  theme(axis.title.y = element_blank())
+
+
+two_panel <- cowplot::plot_grid(
+  det_hist, day_hist, ncol = 1
+)
+
+png(here::here("figs", "ms_figs_rel", "detection_histograms.png"),
+    height = 5, width = 4.5, res = 250, units = "in")
+gridExtra::grid.arrange(
+  gridExtra::arrangeGrob(
+    two_panel, 
+    left = grid::textGrob("Number of Tags", rot = 90, 
+                          gp = grid::gpar(fontface = "bold"))
+  )
+)
+dev.off()
+
 
 
 ## DETECTION/BATHY MAPS --------------------------------------------------------
@@ -1144,27 +1241,9 @@ rel_locs
 dev.off()
 
 
-## DEPTH PROFILES --------------------------------------------------------------
 
-bottom_dot <- ggplot(depth_dat2 %>% 
-         filter(
-           !is.na(roms_temp)
-         )) +
-  geom_point(aes(x = max_bathy, y = -1 * pos_depth, fill = stage),
-             shape = 21, alpha = 0.3) +
-  geom_abline(aes(intercept = 0, slope = -1)) +
-  labs(y = "Observed Depth (m)", 
-       x = "Maximum Bottom Depth\nWithin Detection Radius (m)") +
-  ggsidekick::theme_sleek() +
-  scale_y_continuous(
-    breaks = c(0, -100, -200, -300), 
-    labels = seq(0, 300, by = 100)
-  )
 
-png(here::here("figs", "ms_figs_rel", "depth_vs_bathy.png"),
-    height = 3, width = 6.5, res = 250, units = "in")
-bottom_dot
-dev.off()
+
 
 
 # individual depth distributions by time and terminal location

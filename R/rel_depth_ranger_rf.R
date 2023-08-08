@@ -21,14 +21,13 @@ library(randomForest)
 
 depth_dat_raw1 <- readRDS(
   here::here("data", "depth_dat_nobin.RDS")) %>%
-  # approximately 6k detections have no available ROMS data; exclude for now
+  # approximately 7k detections have no available ROMS data; exclude 
   filter(!is.na(roms_temp))
 
-# depth_dat_raw1 <- readRDS(
-#   here::here("data", "depth_dat_nobin_FULL.RDS")) %>% 
-#   # approximately 6k detections have no available ROMS data; exclude for now
-#   filter(!is.na(mean_slope),
-#          !is.na(roms_temp))
+depth_dat_raw2 <- readRDS(
+  here::here("data", "depth_dat_nobin_FULL.RDS")) %>%
+  filter(!is.na(mean_slope),
+         !is.na(roms_temp))
 
 
 # remove 2022 tag releases (~6k dets) for training model
@@ -55,6 +54,18 @@ timespan <- depth_dat_raw1 %>%
   ) %>% 
   pull(timespan) 
 hist(as.numeric(timespan))  
+
+
+# number of immature and mature fish tagged
+bio_dat %>% 
+  group_by(stage) %>%
+  tally()
+
+depth_dat_raw1 %>% 
+  select(vemco_code, stage) %>% 
+  distinct() %>% 
+  group_by(stage) %>% 
+  tally()
 
 
 ## FIT -------------------------------------------------------------------------

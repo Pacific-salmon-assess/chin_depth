@@ -102,31 +102,14 @@ hendricks_bio <- readRDS(here::here("data", "hendricks_chin_dat.RDS")) %>%
 ## FIT DATA TO STAGE MODEL ##
 
 # estimate stage in Hendricks dataset
-depth_h_raw <- readRDS(here::here("data", "hendricks_depth_dets.RDS")) %>% 
+depth_h <- readRDS(here::here("data", "hendricks_depth_dets.RDS")) %>% 
   mutate(trim_sn = as.character(receiver_sn),
-         week = lubridate::week(date_time))
-term_dets <- depth_h_raw %>% 
-  filter(region == "fraser") %>% 
-  pull(vemco_code)
-
-
-depth_h <- depth_h_raw %>%
-  group_by(vemco_code) %>%
-  mutate(
-    max_week = max(week),
-    stage = case_when(
-      max_week > 40 ~ "immature",
-      vemco_code %in% term_dets ~ "mature",
-      TRUE ~ "unknown")
-  ) %>% 
-  ungroup() %>% 
+         week = lubridate::week(date_time)) %>% 
   left_join(., 
             hendricks_bio %>% 
-              select(vemco_code, fl, lipid, cu_name, agg = agg_name), 
+              select(vemco_code, fl, lipid, cu_name, agg), 
             by = "vemco_code") %>%
   select(colnames(depth_raw)) 
-
-
 
 
 # combine
@@ -146,17 +129,15 @@ depth_dets1 <- rbind(depth_raw, depth_h) %>%
       grepl("_0.", cu_name) | agg == "Fraser" ~ "FraserSub",
       cu_name == "Lower Columbia River" ~ "LowCol",
       TRUE ~ agg
-    )
+    ),
+    # convert small number of above surface (< 6 m) detections to surface
+    depth = ifelse(depth < 0, 0, depth)
   ) %>% 
   filter(!region == "fraser",
-         depth > 0,
          !is.na(depth))
 
 
 ## CHECK FOR DEAD TAGS ---------------------------------------------------------
-# 
-## some tags detected simultaneously at multiple receivers at the same time; to
-# resolve
 
 # deaths <- depth_dets1 %>%
 #   group_by(vemco_code, receiver_name) %>%
@@ -431,13 +412,10 @@ coast <- readRDS(here::here("data",
 # ggcorrplot::ggcorrplot(corr)
 
 
-# missing values due to a) unavailable data and b) delays between ROMS pulls
-
 # join with receiver data (includes bathymetric variables) and impute using
 # k nearest neighbors
 # NOTE restricted to stations where at least some roms data were produced
 roms_trim <- roms_dat %>% 
-  # filter_at(vars(roms_temp:thermo_depth), all_vars(is.na(.)))
   filter(!if_all(c(oxygen:roms_temp, thermo_depth), ~ is.na(.))) 
 
 # identify proportion of NA by each ROMS variable
@@ -603,120 +581,120 @@ saveRDS(depth_dat2, here::here("data", "depth_dat_nobin.RDS"))
 
 ## CLEAN DEPTH DATA 2 ----------------------------------------------------------
 
-roms_interp_trim <- readRDS(here::here("data", "interp_roms_surf_depth_FULL.RDS"))
-# roms_dat<- readRDS(here::here("data", "roms_surf_depth.RDS"))
-
-depth_utm <- lonlat_to_utm(depth_dets1$longitude, depth_dets1$latitude, 
-                           zone = 10) 
-depth_dets1$utm_x <- depth_utm$X / 1000 
-depth_dets1$utm_y <- depth_utm$Y / 1000
-
-
-# add roms data (approximately 6.5k detections have no ROMS data)
-depth_dat <- depth_dets1 %>% 
-  left_join(
-    ., 
-    roms_interp_trim, 
-    by = c("latitude", "longitude", "day", "month", "year", "hour"),
-    
-  ) %>% 
-  ## some tags detected simultaneously at multiple receivers at the same time; 
-  # to resolve take average of spatial variables, including roms data  
-  group_by(vemco_code, date_time) %>% 
-  mutate(
-    nn = n(),
-    rep_number = row_number(),
-    mean_bathy = ifelse(nn > 1, mean(mean_bathy), mean_bathy),
-    max_bathy = ifelse(nn > 1, mean(max_bathy), max_bathy),
-    mean_slope = ifelse(nn > 1, mean(mean_slope), mean_slope),
-    mean_aspect = ifelse(nn > 1, mean(mean_aspect), mean_aspect),
-    shore_dist = ifelse(nn > 1, mean(shore_dist), shore_dist),
-    depth = ifelse(nn > 1, mean(depth), depth),
-    utm_x = ifelse(nn > 1, mean(utm_x), utm_x),
-    utm_y = ifelse(nn > 1, mean(utm_y), utm_y),
-    roms_temp = ifelse(nn > 1, mean(roms_temp), roms_temp),
-    w = ifelse(nn > 1, mean(w), w),
-    v = ifelse(nn > 1, mean(v), v),
-    oxygen = ifelse(nn > 1, mean(oxygen), oxygen),
-    u = ifelse(nn > 1, mean(u), u),
-    zoo = ifelse(nn > 1, mean(zoo), zoo),
-    thermo_depth = ifelse(nn > 1, mean(thermo_depth), thermo_depth)
-  ) %>% 
-  filter(
-    rep_number == "1"
-  ) %>% 
-  ungroup() %>% 
-  mutate(
-    start_time = min(date_time),
-    timestamp = difftime(start_time, date_time, units = "mins"),
-    timestamp_n = -1 * round(as.numeric(timestamp)),
-    region_f = fct_relevel(as.factor(region), "swvi",  "nwwa", "jdf", 
-                           "swwa", "sog", "puget", "columbia"),
-    # corrections for when depth deeper than max bathy depth
-    depth_diff = max_bathy - depth,
-    depth = ifelse(depth_diff > -2.5 & depth_diff < 0, max_bathy - 0.5, depth),
-    # misc timestamp cleaning
-    date_time_local = lubridate::with_tz(date_time, 
-                                         tzone = "America/Los_Angeles"),
-    local_hour = time_foo(date_time_local),
-    local_day = lubridate::yday(date_time_local),
-    vemco_code = as.factor(vemco_code),
-    tag_year = str_split(vemco_code, "_") %>% 
-      purrr::map(., function (x) x[2]) %>% 
-      as.numeric(),
-    # redefine stage so that immature fish become mature May 1 of following
-    # year
-    stage = ifelse(
-      stage == "immature" & year > tag_year & local_day > 120,
-      "mature",
-      stage
-    )
-  ) %>% 
-  filter(
-    # remove large errors in depth relative to bottom bathymetry
-    depth < max_bathy
-  ) %>% 
-  droplevels()
-
-
-
-# add moon data
-moon_data <- oce::moonAngle(depth_dat$date_time, 
-                            depth_dat$longitude, 
-                            depth_dat$latitude)$illuminatedFraction
-
-
-# add sunrise/sunset data
-sun_data <- data.frame(date = as.Date(depth_dat$date_time_local),
-                       lat = depth_dat$latitude, 
-                       lon = depth_dat$longitude)
-temp <- suncalc::getSunlightTimes(data = sun_data,
-                                  keep = c("sunrise", "sunset"),
-                                  tz = "America/Los_Angeles")
-
-depth_dat2 <- cbind(depth_dat, temp %>% dplyr::select(sunrise, sunset)) %>%
-  mutate(
-    rel_depth = depth / max_bathy,
-    logit_rel_depth = boot::logit(rel_depth), 
-    day_night = ifelse(date_time_local > sunrise & date_time_local < sunset,
-                       "day", "night"),
-    moon_illuminated = moon_data,
-    stage = as.factor(stage),
-    #create cyclical time steps representing year day
-    det_dayx = sin(2 * pi * local_day / 365),
-    det_dayy = cos(2 * pi * local_day / 365)
-  ) %>%
-  dplyr::select(
-    vemco_code, cu_name, agg, fl, lipid, stage, trim_sn, 
-    receiver_name, latitude, longitude, utm_y, utm_x, max_bathy,
-    mean_bathy, mean_slope, 
-    shore_dist, u, v, w, roms_temp, zoo, oxygen, thermo_depth,
-    region_f, date_time_utm = date_time, date_time_local, timestamp_n, 
-    local_day, det_dayx, det_dayy, year, 
-    local_hour, day_night, moon_illuminated, pos_depth = depth,
-    rel_depth, logit_rel_depth) 
-
-saveRDS(depth_dat2, here::here("data", "depth_dat_nobin_FULL.RDS"))
+# roms_interp_trim <- readRDS(here::here("data", "interp_roms_surf_depth_FULL.RDS"))
+# # roms_dat<- readRDS(here::here("data", "roms_surf_depth.RDS"))
+# 
+# depth_utm <- lonlat_to_utm(depth_dets1$longitude, depth_dets1$latitude, 
+#                            zone = 10) 
+# depth_dets1$utm_x <- depth_utm$X / 1000 
+# depth_dets1$utm_y <- depth_utm$Y / 1000
+# 
+# 
+# # add roms data (approximately 6.5k detections have no ROMS data)
+# depth_dat <- depth_dets1 %>% 
+#   left_join(
+#     ., 
+#     roms_interp_trim, 
+#     by = c("latitude", "longitude", "day", "month", "year", "hour"),
+#     
+#   ) %>% 
+#   ## some tags detected simultaneously at multiple receivers at the same time; 
+#   # to resolve take average of spatial variables, including roms data  
+#   group_by(vemco_code, date_time) %>% 
+#   mutate(
+#     nn = n(),
+#     rep_number = row_number(),
+#     mean_bathy = ifelse(nn > 1, mean(mean_bathy), mean_bathy),
+#     max_bathy = ifelse(nn > 1, mean(max_bathy), max_bathy),
+#     mean_slope = ifelse(nn > 1, mean(mean_slope), mean_slope),
+#     mean_aspect = ifelse(nn > 1, mean(mean_aspect), mean_aspect),
+#     shore_dist = ifelse(nn > 1, mean(shore_dist), shore_dist),
+#     depth = ifelse(nn > 1, mean(depth), depth),
+#     utm_x = ifelse(nn > 1, mean(utm_x), utm_x),
+#     utm_y = ifelse(nn > 1, mean(utm_y), utm_y),
+#     roms_temp = ifelse(nn > 1, mean(roms_temp), roms_temp),
+#     w = ifelse(nn > 1, mean(w), w),
+#     v = ifelse(nn > 1, mean(v), v),
+#     oxygen = ifelse(nn > 1, mean(oxygen), oxygen),
+#     u = ifelse(nn > 1, mean(u), u),
+#     zoo = ifelse(nn > 1, mean(zoo), zoo),
+#     thermo_depth = ifelse(nn > 1, mean(thermo_depth), thermo_depth)
+#   ) %>% 
+#   filter(
+#     rep_number == "1"
+#   ) %>% 
+#   ungroup() %>% 
+#   mutate(
+#     start_time = min(date_time),
+#     timestamp = difftime(start_time, date_time, units = "mins"),
+#     timestamp_n = -1 * round(as.numeric(timestamp)),
+#     region_f = fct_relevel(as.factor(region), "swvi",  "nwwa", "jdf", 
+#                            "swwa", "sog", "puget", "columbia"),
+#     # corrections for when depth deeper than max bathy depth
+#     depth_diff = max_bathy - depth,
+#     depth = ifelse(depth_diff > -2.5 & depth_diff < 0, max_bathy - 0.5, depth),
+#     # misc timestamp cleaning
+#     date_time_local = lubridate::with_tz(date_time, 
+#                                          tzone = "America/Los_Angeles"),
+#     local_hour = time_foo(date_time_local),
+#     local_day = lubridate::yday(date_time_local),
+#     vemco_code = as.factor(vemco_code),
+#     tag_year = str_split(vemco_code, "_") %>% 
+#       purrr::map(., function (x) x[2]) %>% 
+#       as.numeric(),
+#     # redefine stage so that immature fish become mature May 1 of following
+#     # year
+#     stage = ifelse(
+#       stage == "immature" & year > tag_year & local_day > 120,
+#       "mature",
+#       stage
+#     )
+#   ) %>% 
+#   filter(
+#     # remove large errors in depth relative to bottom bathymetry
+#     depth < max_bathy
+#   ) %>% 
+#   droplevels()
+# 
+# 
+# 
+# # add moon data
+# moon_data <- oce::moonAngle(depth_dat$date_time, 
+#                             depth_dat$longitude, 
+#                             depth_dat$latitude)$illuminatedFraction
+# 
+# 
+# # add sunrise/sunset data
+# sun_data <- data.frame(date = as.Date(depth_dat$date_time_local),
+#                        lat = depth_dat$latitude, 
+#                        lon = depth_dat$longitude)
+# temp <- suncalc::getSunlightTimes(data = sun_data,
+#                                   keep = c("sunrise", "sunset"),
+#                                   tz = "America/Los_Angeles")
+# 
+# depth_dat2 <- cbind(depth_dat, temp %>% dplyr::select(sunrise, sunset)) %>%
+#   mutate(
+#     rel_depth = depth / max_bathy,
+#     logit_rel_depth = boot::logit(rel_depth), 
+#     day_night = ifelse(date_time_local > sunrise & date_time_local < sunset,
+#                        "day", "night"),
+#     moon_illuminated = moon_data,
+#     stage = as.factor(stage),
+#     #create cyclical time steps representing year day
+#     det_dayx = sin(2 * pi * local_day / 365),
+#     det_dayy = cos(2 * pi * local_day / 365)
+#   ) %>%
+#   dplyr::select(
+#     vemco_code, cu_name, agg, fl, lipid, stage, trim_sn, 
+#     receiver_name, latitude, longitude, utm_y, utm_x, max_bathy,
+#     mean_bathy, mean_slope, 
+#     shore_dist, u, v, w, roms_temp, zoo, oxygen, thermo_depth,
+#     region_f, date_time_utm = date_time, date_time_local, timestamp_n, 
+#     local_day, det_dayx, det_dayy, year, 
+#     local_hour, day_night, moon_illuminated, pos_depth = depth,
+#     rel_depth, logit_rel_depth) 
+# 
+# saveRDS(depth_dat2, here::here("data", "depth_dat_nobin_FULL.RDS"))
 
 
 ## CLEAN PREDICTIVE DATA -------------------------------------------------------
@@ -793,27 +771,6 @@ ggplot(pred_roms_out %>% filter(season == "summer", !is.na(u))) +
 saveRDS(pred_roms_out %>% 
           filter(!is.na(u), !is.na(v)), 
         here::here("data", "pred_bathy_grid_roms.RDS"))
-
-
-## CHECK DETS ------------------------------------------------------------------
-
-# one receiver had > 1000 detections 
-depth_dat2 %>% 
-  filter(trim_sn == "108654", year == "2020") %>%
-  group_by(vemco_code) %>% 
-  tally()
-# check tags w/ large number dets
-
-depth_dat2 %>%
-  filter(vemco_code %in% c("10123_2020", "10121_2020")) %>%
-  ggplot(., aes(x = date_time_local, y = -1 * pos_depth, fill = region_f)) +
-  geom_point(shape = 21, alpha = 0.4) +
-  scale_fill_discrete(name = "") +
-  labs(x = "Timestamp", y = "Depth (m)") +
-  ggsidekick::theme_sleek() +
-  facet_wrap(~vemco_code) +
-  theme(legend.position = "top")
-# seems reasonable...
 
 
 ## BIOLOGICAL TRAITS -----------------------------------------------------------

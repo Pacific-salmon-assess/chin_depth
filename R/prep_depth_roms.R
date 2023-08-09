@@ -128,7 +128,7 @@ depth_dets1 <- rbind(depth_raw, depth_h) %>%
       TRUE ~ agg
     ),
     # convert small number of above surface (< 6 m) detections to surface
-    depth = ifelse(depth < 0, 0, depth)
+    depth = ifelse(depth <= 0.1, 0.1, depth)
   ) %>% 
   filter(!region == "fraser",
          !is.na(depth))

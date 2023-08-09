@@ -35,38 +35,6 @@ depth_dat_raw <- depth_dat_raw1 %>%
   filter(!grepl("2022", vemco_code))
 
 
-# number of detections per tag
-depth_dat_raw1 %>% 
-  group_by(vemco_code) %>% 
-  tally() %>% 
-  pull(n) %>% 
-  range()
-
-# calculate timespan overwhich detections provided
-timespan <- depth_dat_raw1 %>% 
-  group_by(vemco_code) %>% 
-  summarize(
-    min_time = min(date_time_local),
-    max_time = max(date_time_local)
-  ) %>% 
-  mutate(
-    timespan = difftime(max_time, min_time, units = "days")
-  ) %>% 
-  pull(timespan) 
-hist(as.numeric(timespan))  
-
-
-# number of immature and mature fish tagged
-bio_dat %>% 
-  group_by(stage) %>%
-  tally()
-
-depth_dat_raw1 %>% 
-  select(vemco_code, stage) %>% 
-  distinct() %>% 
-  group_by(stage) %>% 
-  tally()
-
 
 ## FIT -------------------------------------------------------------------------
 

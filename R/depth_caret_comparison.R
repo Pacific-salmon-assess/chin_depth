@@ -114,6 +114,20 @@ model_tbl$recipe <- purrr::map(
 })
 
 
+
+dd <- train(
+  gbm_tbl$recipe[[1]],
+  gbm_tbl$train_data[[1]] %>% 
+    filter(!depth_var < -10) %>% 
+    dplyr::select(-ind_block, -max_bathy),
+  method = "gbm", 
+  metric = "RMSE",
+  maximize = FALSE,
+  trControl = ctrl,
+  tuneGrid = gbm_grid[100:110, ]
+)
+
+
 ## FIT MODELS ------------------------------------------------------------------
 
 ## shared settings
@@ -189,15 +203,15 @@ plan(multisession, workers = 8)
 
 
 # fit models (separately)
-# gbm_tbl <- model_tbl %>% filter(model_type == "gbm")
-# gbm_list <- future_pmap(list("gbm",
-#                              gbm_tbl$recipe,
-#                              gbm_tbl$train_data),
-#                         .f = fit_foo,
-#                         .options = furrr_options(seed = TRUE))
-# names(gbm_list) <- gbm_tbl$response
-# saveRDS(gbm_list,
-#         here::here("data", "model_fits", "gbm_model_comparison.rds"))
+gbm_tbl <- model_tbl %>% filter(model_type == "gbm")
+gbm_list <- future_pmap(list("gbm",
+                             gbm_tbl$recipe,
+                             gbm_tbl$train_data),
+                        .f = fit_foo,
+                        .options = furrr_options(seed = TRUE))
+names(gbm_list) <- gbm_tbl$response
+saveRDS(gbm_list,
+        here::here("data", "model_fits", "gbm_model_comparison.rds"))
 gbm_list <- readRDS(here::here("data", "model_fits", "gbm_model_comparison.rds"))
 
 

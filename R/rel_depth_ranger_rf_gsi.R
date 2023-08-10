@@ -12,43 +12,13 @@ library(randomForest)
 
 
 depth_dat_raw1 <- readRDS(
-  here::here("data", "depth_dat_nobin.RDS")) %>% 
-  # approximately 6k detections have no available ROMS data; exclude for now
-  filter(!is.na(roms_temp)) %>% 
-  #bin aggregates
-  mutate(
-    agg = case_when(
-      grepl("Fraser", agg) ~ "Fraser",
-      grepl("Col", agg) ~ "Col",
-      TRUE ~ agg
-    )
-  )
-
+  here::here("data", "depth_dat_nobin.RDS")) %>%
+  # approximately 7k detections have no available ROMS data; exclude 
+  filter(!is.na(roms_temp))
 
 # remove 2022 tag releases (~6k dets) for training model
 depth_dat_raw <- depth_dat_raw1 %>% 
   filter(!grepl("2022", vemco_code))
-
-
-# number of detections per tag
-depth_dat_raw1 %>% 
-  group_by(vemco_code) %>% 
-  tally() %>% 
-  pull(n) %>% 
-  range()
-
-# calculate timespan overwhich detections provided
-timespan <- depth_dat_raw1 %>% 
-  group_by(vemco_code) %>% 
-  summarize(
-    min_time = min(date_time_local),
-    max_time = max(date_time_local)
-  ) %>% 
-  mutate(
-    timespan = difftime(max_time, min_time, units = "days")
-  ) %>% 
-  pull(timespan) 
-hist(as.numeric(timespan))  
 
 
 ## FIT -------------------------------------------------------------------------
@@ -107,109 +77,46 @@ train_depth_baked <- prep(depth_recipe) %>%
          dplyr::select(-ind_block, -max_bathy))
 
 #pull model attributes from top ranger
-rf_list <- readRDS(here::here("data", "model_fits", "rf_model_comparison.rds"))
-top_mod <- rf_list[[2]]$top_model
-
-ranger_rf <- ranger::ranger(
-  depth ~ .,
-  data = train_depth_baked,
-  #hyperpars based on values from top model which is not saved on all locals
-  num.trees = 2000,
-  mtry = 11,
-  keep.inbag = TRUE,
-  quantreg = TRUE,
-  importance = "permutation"
-)
-
-saveRDS(ranger_rf,
-        here::here("data", "model_fits", "relative_rf_ranger_gsi.rds"))
+# rf_list <- readRDS(here::here("data", "model_fits", "rf_model_comparison.rds"))
+# top_mod <- rf_list[[2]]$top_model
+# 
+# ranger_rf <- ranger::ranger(
+#   depth ~ .,
+#   data = train_depth_baked,
+#   #hyperpars based on values from top model which is not saved on all locals
+#   num.trees = 2000,
+#   mtry = 5,
+#   keep.inbag = TRUE,
+#   quantreg = TRUE,
+#   importance = "permutation"
+# )
+# 
+# saveRDS(ranger_rf,
+#         here::here("data", "model_fits", "relative_rf_ranger_gsi.rds"))
 ranger_rf <- readRDS(here::here("data", "model_fits", "relative_rf_ranger.rds"))
-
-
-# CHECK PREDS ------------------------------------------------------------------
-
-obs_preds <- predict(ranger_rf,
-                     data = train_depth_baked)
-
-dum <- train_depth %>% 
-  mutate(mean_pred = obs_preds$predictions,
-         mean_pred_real = mean_pred * max_bathy,
-         depth_real = depth * max_bathy,
-         split_group = "train 2019-21")
-plot(depth ~ mean_pred, dum)
-plot(depth_real ~ mean_pred_real, dum)
-
-
-# hold out predictions
-test_depth_baked <- prep(depth_recipe) %>%
-  bake(., 
-       new_data = test_depth %>% 
-         dplyr::select(-ind_block, -max_bathy))
-test_preds <- predict(ranger_rf,
-                      data = test_depth_baked)
-dum_test <- test_depth %>% 
-  mutate(mean_pred = test_preds$predictions,
-         mean_pred_real = mean_pred * max_bathy,
-         depth_real = depth * max_bathy,
-         split_group = "test 2019-21")
-
-
-# 2022 predictions
-test_depth_baked_22 <- prep(depth_recipe) %>%
-  bake(., 
-       new_data = test_depth_22 %>% 
-         dplyr::select(-max_bathy))
-test_preds_22<- predict(ranger_rf,
-                        data = test_depth_baked_22)
-dum_test_22 <- test_depth_22 %>% 
-  mutate(ind_block = NA,
-         mean_pred = test_preds_22$predictions,
-         mean_pred_real = mean_pred * max_bathy,
-         depth_real = depth * max_bathy,
-         split_group = "test 2022")
-
-all_preds <- do.call(rbind,
-                     list(dum, dum_test, dum_test_22)) %>% 
-  mutate(
-    split_group = fct_relevel(
-      as.factor(split_group), "train 2019-21", after = 0)
-  )
-
-fit_obs <- ggplot() +
-  geom_point(
-    data = all_preds,
-    aes(x = depth_real, y = mean_pred_real, fill = split_group),
-    shape = 21, alpha = 0.025
-  ) +
-  labs(
-    x = "Observed Depth", y = "Predicted Mean Depth"
-  ) +
-  scale_fill_discrete(name = "") +
-  ggsidekick::theme_sleek() +
-  facet_wrap(~split_group) +
-  theme(legend.position = "none")
-
-png(here::here("figs", "ms_figs_rel", "obs_preds_rel.png"),
-    height = 3, width = 6, units = "in", res = 200)
-fit_obs
-dev.off()
-
-dum_test_22$resid <- dum_test_22$mean_pred_real - dum_test_22$depth_real
-hist(dum_test_22$resid)
-
-
-# rmse of each group
-Metrics::rmse(dum$depth, dum$mean_pred)
-Metrics::rmse(dum_test$depth, dum_test$mean_pred)
 
 
 # VARIABLE IMPORTANCE ----------------------------------------------------------
 
 imp_vals <- ranger::importance(ranger_rf, type = "permutation", scale = F) 
+
+# key for axis labels
+var_name_key <- data.frame(
+  var = names(imp_vals),
+  var_f = c("Fork Length", "Lipid Content", "UTM X", "UTM Y", "Year Day 2", 
+            "Year Day 1", "Bottom Depth", "Bottom Slope", "Shore Distance", 
+            "Hor. Current 1", "Hor. Current 2", "Vert. Current", "Temperature", 
+            "Zooplankton", "Oxygen", "Thermocline Depth", "Lunar Cycle", "Maturity",
+            "Day/Night",  "Up. Col.", "ECVI", "Fraser Sub.", "Fraser Year.",
+            "Low. Col", "Puget Sound", "WA/OR", "WCVI")
+)
+
 imp_dat <- data.frame(
   var = names(imp_vals),
   val = imp_vals
 ) %>% 
+  left_join(., var_name_key, by = "var") %>% 
+  arrange(-val) %>% 
   mutate(
     var = fct_reorder(as.factor(var), -val),
     category = case_when(
@@ -221,19 +128,10 @@ imp_dat <- data.frame(
       grepl("agg", var) ~ "stock",
       TRUE ~ "dynamic"
     )
-  ) %>%
-  arrange(-val)
-imp_dat$var_f = factor(
-  imp_dat$var, 
-  labels = c("Year Day 1", "Bottom Depth", "UTM X", "UTM Y", "Lunar Cycle", 
-             "Temperature", "Zooplankton", "Maturity", "Bottom Slope",
-             "Year Day 2", "Oxygen", "Fork Length", "Shore Distance", 
-             "Thermocline Depth", "H Current 1", "Lipid Content", "H Current 2",
-             "Day/Night", "Vertical Current", "Columbia", "Puget",
-             "Fraser", "WA/OR", "ECVI")
-)
+  ) 
 
-imp_plot <- ggplot(imp_dat, aes(x = var_f, y = val)) +
+
+imp_plot <- ggplot(imp_dat, aes(x = fct_reorder(var_f, -val), y = val)) +
   geom_point(aes(fill = category), shape = 21, size = 2) +
   ggsidekick::theme_sleek() +
   labs(x = "Covariate", y = "Relative Importance") +

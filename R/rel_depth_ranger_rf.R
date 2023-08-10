@@ -90,22 +90,23 @@ train_depth_baked <- prep(depth_recipe) %>%
          dplyr::select(-ind_block, -max_bathy))
 
 #pull model attributes from top ranger
-rf_list <- readRDS(here::here("data", "model_fits", "rf_model_comparison.rds"))
-top_mod <- rf_list[[2]]$top_model
+# rf_list <- readRDS(here::here("data", "model_fits", "rf_model_comparison.rds"))
+# top_mod <- rf_list[[2]]$top_model
+# 
+# ranger_rf <- ranger::ranger(
+#   depth ~ .,
+#   data = train_depth_baked,
+#   #hyperpars based on values from top model which is not saved on all locals
+#   num.trees = 2000,
+#   mtry = 5,
+#   keep.inbag = TRUE,
+#   quantreg = TRUE,
+#   importance = "permutation"
+# )
 
-ranger_rf <- ranger::ranger(
-  depth ~ .,
-  data = train_depth_baked,
-  #hyperpars based on values from top model which is not saved on all locals
-  num.trees = 2000,
-  mtry = 5,
-  keep.inbag = TRUE,
-  quantreg = TRUE,
-  importance = "permutation"
-)
+# saveRDS(ranger_rf,
+#         here::here("data", "model_fits", "relative_rf_ranger.rds"))
 
-saveRDS(ranger_rf,
-        here::here("data", "model_fits", "relative_rf_ranger.rds"))
 ranger_rf <- readRDS(here::here("data", "model_fits", "relative_rf_ranger.rds"))
 ranger_rf <- readRDS(here::here("data", "model_fits", "relative_rf_ranger_FULL.rds"))
 
@@ -166,7 +167,7 @@ fit_obs <- ggplot() +
     shape = 21, alpha = 0.025
     ) +
   labs(
-    x = "Observed Depth", y = "Predicted Mean Depth"
+    x = "Observed Depth (m)", y = "Predicted Mean Depth (m)"
   ) +
   scale_fill_discrete(name = "") +
   ggsidekick::theme_sleek() +
@@ -190,10 +191,24 @@ Metrics::rmse(dum_test$depth, dum_test$mean_pred)
 # VARIABLE IMPORTANCE ----------------------------------------------------------
 
 imp_vals <- ranger::importance(ranger_rf, type = "permutation", scale = F) 
+
+# key for axis labels
+var_name_key <- data.frame(
+  var = names(imp_vals),
+  var_f = c("Fork Length", "Lipid Content", "UTM X", "UTM Y", "Year Day 2", 
+      "Year Day 1", "Bottom Depth", "Bottom Slope", "Shore Distance", 
+      "Hor. Current 1", "Hor. Current 2", "Vert. Current", "Temperature", 
+      "Zooplankton", "Oxygen", "Thermocline Depth", "Lunar Cycle", "Maturity",
+      "Day/Night")
+)
+
+
 imp_dat <- data.frame(
   var = names(imp_vals),
   val = imp_vals
   ) %>% 
+  left_join(., var_name_key, by = "var") %>% 
+  arrange(-val) %>% 
   mutate(
     var = fct_reorder(as.factor(var), -val),
     category = case_when(
@@ -204,18 +219,10 @@ imp_dat <- data.frame(
       var %in% c("stage_mature", "fl", "lipid") ~ "biological",
       TRUE ~ "dynamic"
     )
-  ) %>% 
-  arrange(-val) 
-imp_dat$var_f = factor(
-  imp_dat$var, 
-  labels = c("Year Day 1", "Bottom Depth", "UTM X", "UTM Y", "Lunar Cycle", 
-             "Temperature", "Zooplankton", "Bottom Slope", "Maturity", 
-             "Year Day 2", "Oxygen", "Fork Length", "Shore Distance", 
-             "Thermocline Depth", "Lipid Content", "H Current 1", "H Current 2",
-             "Day/Night", "Vertical Current")
-)
+  ) 
+  
 
-imp_plot <- ggplot(imp_dat, aes(x = var, y = val)) +
+imp_plot <- ggplot(imp_dat, aes(x = fct_reorder(var_f, - val), y = val)) +
   geom_point(aes(fill = category), shape = 21, size = 2) +
   ggsidekick::theme_sleek() +
   labs(x = "Covariate", y = "Relative Importance") +
@@ -228,29 +235,6 @@ png(here::here("figs", "ms_figs_rel", "importance_quantreg.png"),
     height = 4, width = 6, units = "in", res = 250)
 imp_plot
 dev.off()
-
-
-# VARIABLE IMPORTANCE WITH PARTY PACKAGE ---------------------------------------
-
-## TAKES TOO LONG TO COMPLETE
-
-# rf_party <- party::cforest(
-#   depth ~ .,
-#   data = train_depth_baked,
-#   control = party::cforest_unbiased(
-#     mtry = top_mod$tuneValue$mtry,
-#     ntree = top_mod$param$num.trees
-#     )
-# )
-# 
-# imp1 <- permimp::permimp(rf_party, conditional = TRUE, progressBar = TRUE)
-# 
-
-# imp <- rf_party %>%
-#   party::varimp(conditional = TRUE) %>% 
-#   as_tibble() %>% 
-#   rownames_to_column("Feature") %>% 
-#   rename(Importance = value)
 
 
 # SPATIAL PREDICT --------------------------------------------------------------
@@ -272,14 +256,11 @@ roms_month_means <- readRDS(here::here("data", "depth_dat_nobin.RDS")) %>%
   mutate(season = ifelse(month == "1", "winter", "summer")) %>%
   group_by(season) %>%
   dplyr::summarize(
-    # u = mean(u, na.rm = T),
-    # roms_temp = mean(roms_temp, na.rm = T),
-    # v = mean(v, na.rm = T),
-    # w = mean(w, na.rm = T),
-    # zoo = mean(zoo, na.rm = T),
-    # oxygen = mean(oxygen, na.rm = T),
-    thermo_depth = mean(thermo_depth, na.rm = T))
+    thermo_depth = mean(thermo_depth, na.rm = T)
+    )
 
+
+# input grid includes ROMS data for entire study area for specified dates
 bath_grid_in <- readRDS(here::here("data", "pred_bathy_grid_roms.RDS")) 
 bath_grid <- bath_grid_in %>% 
   filter(!mean_bathy > 400,
@@ -298,7 +279,6 @@ base_plot <- ggplot() +
   theme(axis.title = element_blank()) +
   scale_x_continuous(expand = c(0, 0)) +
   scale_y_continuous(expand = c(0, 0))
-
 
 
 ## first set are average spatial predictions (i.e. mean biological and temporal 
@@ -352,7 +332,7 @@ mean_depth <- base_plot +
   geom_raster(data = pred_dat2 %>% filter(season == "summer"), 
               aes(x = utm_x_m, y = utm_y_m, fill = pred_med)) +
   geom_sf(data = coast_utm) +
-  scale_fill_viridis_c(name = "Mean Depth",
+  scale_fill_viridis_c(name = "Mean Depth (m)",
                        direction = -1) +
   theme(legend.position = "top")
 
@@ -360,7 +340,7 @@ var_depth <- base_plot +
   geom_raster(data = pred_dat2 %>% filter(season == "summer"), 
               aes(x = utm_x_m, y = utm_y_m, fill = pred_int_width)) +
   geom_sf(data = coast_utm) +
-  scale_fill_viridis_c(name = "Prediction\nInterval Width", 
+  scale_fill_viridis_c(name = "Prediction\nInt. Width (m)", 
                        option = "C",
                        direction = -1)  +
   theme(legend.position = "top",
@@ -601,11 +581,12 @@ zoo_eff2 <- zoo_eff %>%
   mutate(comp = "zoo") %>% 
   select(mean_bathy:utm_y_m, comp, rel_diff = zoo_diff)
 
-comb_preds <- list(moon_eff2,
-                   sst_eff2,
-                   zoo_eff2,
-                   mat_eff2
-                   ) %>% 
+comb_preds <- list(
+  moon_eff2,
+  sst_eff2,
+  zoo_eff2,
+  mat_eff2
+) %>% 
   bind_rows() %>% 
   mutate(
     comp = factor(
@@ -675,41 +656,14 @@ rel_latent <- base_plot +
   geom_raster(data = pred_latent2, 
               aes(x = utm_x_m, y = utm_y_m, fill = rel_pred_med)) +
   geom_sf(data = coast_utm) +
-  scale_fill_viridis_c(name = "Bathymetric\nDepth Ratio",
+  scale_fill_viridis_c(name = "Predicted\nBathymetric\nDepth Ratio",
                        direction = -1, 
                        option = "A") 
-
-# mean_latent <- base_plot +
-#   geom_raster(data = pred_latent2, 
-#               aes(x = utm_x_m, y = utm_y_m, fill = pred_med)) +
-#   geom_sf(data = coast_utm) +
-#   scale_fill_viridis_c(name = "Mean Depth",
-#                        direction = -1) +
-#   theme(legend.position = "top")
 
 
 # COUNTERFACTUAL PREDICT -------------------------------------------------------
 
-# generate predictions for maturity stage and different counterfacs (e.g. 
-# most important 4 variables)
-
-# currently grouped by location but only present JdF; alternatively could switch
-# to mean utm
-# new_dat <- 
-#   data.frame(
-#     # points representing Ucluelet and JdF
-#     site = c("JdF", "Ucluelet", "Columbia", "Gulf Islands", "Swiftsure"),
-#     lat = c(48.31192, 48.95233, 46.4454, 48.48166, 48.588497),
-#     lon = c(-124.08385, -125.7803, -124.1587, -123.19792, -124.998096)
-#   )
-# new_dat <- sdmTMB::add_utm_columns(
-#   new_dat,
-#   ll_names = c("lon", "lat"),
-#   utm_names = c("utm_x", "utm_y"),
-#   units = "km"
-# )
-new_dat <- #new_dat %>%
-  data.frame(
+new_dat <- data.frame(
     utm_x = median(train_depth_baked$utm_x),
     utm_y = median(train_depth_baked$utm_y),
     fl = median(train_depth_baked$fl),
@@ -805,10 +759,6 @@ counterfac_tbl <- tibble(
   mutate(
     pred_dat_in = purrr::map(var_in,
                              gen_pred_dat),
-    # preds = purrr::map(pred_dat_in,
-    #                    pred_foo,
-    #                    type = "quantiles",
-    #                    quantiles = c(0.1, 0.5, 0.9)),
     preds_ci = purrr::map(pred_dat_in,
                           pred_foo,
                           type = "se",
@@ -829,7 +779,7 @@ plot_foo <- function (data, ...) {
     scale_x_continuous(expand = c(0, 0)) +
     scale_y_continuous(breaks = c(0, -0.25, -0.5, -0.75, -1.0),
                        labels = c("0", "0.25", "0.5", "0.75", "1.0"),
-                       limits = c(-0.9, 0))
+                       limits = c(-0.75, -0.05))
 }
 
 
@@ -837,7 +787,6 @@ bathy_cond <- counterfac_tbl %>%
   filter(var_in == "mean_bathy") %>% 
   pull(preds_ci) %>% 
   as.data.frame() %>% 
-  # filter(site == "JdF") %>% 
   plot_foo(data = .,
            x = "mean_bathy") +  
   labs(x = "Mean Bottom Depth") +
@@ -849,7 +798,6 @@ yday_cond <- counterfac_tbl %>%
   filter(var_in == "local_day") %>% 
   pull(preds_ci) %>% 
   as.data.frame() %>% 
-  # filter(site == "JdF") %>% 
   plot_foo(data = .,
            x = "local_day") +  
   labs(x = "Year Day") +
@@ -885,7 +833,6 @@ temp_cond <- counterfac_tbl %>%
   filter(var_in == "roms_temp") %>% 
   pull(preds_ci) %>% 
   as.data.frame() %>% 
-  # filter(site == "JdF") %>% 
   plot_foo(data = .,
            x = "roms_temp") +  
   theme(
@@ -909,7 +856,6 @@ moon_cond <- counterfac_tbl %>%
   theme(
     axis.title.y = element_blank()
   ) 
-
 
 
 # pdf for region specific relationships

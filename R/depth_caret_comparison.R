@@ -50,7 +50,6 @@ depth_dat <- depth_dat_raw %>%
   dplyr::select(
     depth = pos_depth, rel_depth, logit_rel_depth,
     fl, lipid, stage, utm_x, utm_y, day_night,
-    # det_day = local_day,
     det_dayx, det_dayy,
     max_bathy, mean_bathy, mean_slope, shore_dist,
     u, v, w, roms_temp, zoo, oxygen, thermo_depth, moon_illuminated,
@@ -64,31 +63,21 @@ test_depth <- depth_dat %>% filter(ind_block == "5") %>% droplevels()
 
 ## PREP MODELS -----------------------------------------------------------------
 
-# helper function for cleaning up stage-specific data
-stage_foo <- function(dat, stage_in) {
-  dat %>% 
-    filter(stage == stage_in) %>% 
-    rename(stage_dat = stage)
-}
-
-
 ## create dataframe of models to compete
 model_tbl <- expand.grid(
   model_type = c("gbm", "rf"),
-  response = c("logit_rel_depth", "rel_depth", "depth"),
+  response = c("logit_rel_depth",
+    "rel_depth", "depth"),
   stage_dat = c("integrated")
   ) %>% 
   as_tibble() 
 
 # function to add data based on input variables
 add_data <- function(response, stage_dat) {
-  # select dataset
-  if (stage_dat == "integrated") {
-    train_dum <- train_depth %>% 
-      dplyr::select(depth_var = all_of(response), fl:ind_block)
-    test_dum <- test_depth %>% 
-      dplyr::select(depth_var = all_of(response), fl:ind_block)
-  } 
+  train_dum <- train_depth %>% 
+    dplyr::select(depth_var = all_of(response), fl:ind_block)
+  test_dum <- test_depth %>% 
+    dplyr::select(depth_var = all_of(response), fl:ind_block)
   # subset based on response
   list(train = train_dum, test = test_dum)
 }
@@ -112,20 +101,6 @@ model_tbl$recipe <- purrr::map(
     recipe(depth_var ~ ., data = dum) %>% 
       step_dummy(all_predictors(), -all_numeric())
 })
-
-
-
-dd <- train(
-  gbm_tbl$recipe[[1]],
-  gbm_tbl$train_data[[1]] %>% 
-    filter(!depth_var < -10) %>% 
-    dplyr::select(-ind_block, -max_bathy),
-  method = "gbm", 
-  metric = "RMSE",
-  maximize = FALSE,
-  trControl = ctrl,
-  tuneGrid = gbm_grid[100:110, ]
-)
 
 
 ## FIT MODELS ------------------------------------------------------------------
@@ -215,15 +190,15 @@ saveRDS(gbm_list,
 gbm_list <- readRDS(here::here("data", "model_fits", "gbm_model_comparison.rds"))
 
 
-# rf_tbl <- model_tbl %>% filter(model_type == "rf")
-# rf_list <- future_pmap(list("rf",
-#                             rf_tbl$recipe,
-#                             rf_tbl$train_data),
-#                        .f = fit_foo,
-#                        .options = furrr_options(seed = TRUE))
-# names(rf_list) <- rf_tbl$response
-# saveRDS(rf_list,
-#         here::here("data", "model_fits", "rf_model_comparison.rds"))
+rf_tbl <- model_tbl %>% filter(model_type == "rf")
+rf_list <- future_pmap(list("rf",
+                            rf_tbl$recipe,
+                            rf_tbl$train_data),
+                       .f = fit_foo,
+                       .options = furrr_options(seed = TRUE))
+names(rf_list) <- rf_tbl$response
+saveRDS(rf_list,
+        here::here("data", "model_fits", "rf_model_comparison.rds"))
 rf_list <- readRDS(here::here("data", "model_fits", "rf_model_comparison.rds"))
 
 
@@ -332,7 +307,8 @@ rmse_out <- model_tbl %>%
                values_to = "rmse") %>% 
   mutate(
     dataset = fct_relevel(dataset, "test", after = Inf),
-    response = fct_relevel(response, "depth", "rel_depth", "logit_rel_depth")
+    response = fct_relevel(response, "depth", "rel_depth"#, "logit_rel_depth"
+                           )
   )
 
 
@@ -348,7 +324,7 @@ ggplot(rmse_out) +
   labs(y = "Root Mean Square Error", x = "Model Type")
 dev.off()
 
-write.csv(rmse_out,
+write.csv(rmse_out %>% arrange(dataset, desc(rmse)),
           here::here("figs", "model_comp", "top_model_transformed_rmse.csv"),
           row.names = FALSE)
 
@@ -359,27 +335,40 @@ write.csv(rmse_out,
 # performance tables and figures
 gbm_dat <- map2(names(gbm_list), gbm_list, function (name, x) {
   x$results %>% 
-    mutate(response = name)
+    mutate(response = name,
+           interaction.depth = as.factor(interaction.depth),
+           shrinkage = as.factor(shrinkage))
 }) %>% 
   bind_rows() 
 gbm_hyper_plot <- ggplot(gbm_dat) +
-  geom_point(aes(x = n.trees, y = RMSE, color = as.factor(interaction.depth),
-                 shape = as.factor(shrinkage))) +
-  facet_grid(response~n.minobsinnode, scales = "free_y")
+  geom_point(aes(x = n.trees, y = RMSE, color = interaction.depth,
+                 shape = shrinkage)) +
+  facet_grid(response~n.minobsinnode, scales = "free_y") +
+  theme(legend.position = "top") +
+  ggsidekick::theme_sleek()
 
 rf_dat <- map2(names(rf_list), rf_list, function (name, x) {
   x$results %>% 
-    mutate(response = name)
+    mutate(response = name,
+           mtry = as.factor(mtry),
+           min.node.size = as.factor(min.node.size))
 }) %>% 
   bind_rows() 
 rf_hyper_plot <- ggplot(rf_dat) +
-  geom_point(aes(x = as.factor(mtry), y = RMSE, color = splitrule,
-                 shape = as.factor(min.node.size))) +
-  facet_grid(response~n_trees, scales = "free_y")
+  geom_point(aes(x = mtry, y = RMSE, color = splitrule,
+                 shape = min.node.size)) +
+  facet_grid(response~n_trees, scales = "free_y") +
+  theme(legend.position = "top") +
+  ggsidekick::theme_sleek()
 
 
 ## export 
-pdf(here::here("figs", "model_comp", "hyperpar_tuning.pdf"))
+png(here::here("figs", "model_comp", "gmb_hyper_plot.png"), units = "in",
+    height = 5.5, width = 6.25, res = 250)
 gbm_hyper_plot
+dev.off()
+
+png(here::here("figs", "model_comp", "rf_hyper_plot.png"), units = "in",
+    height = 5.5, width = 6.25, res = 250)
 rf_hyper_plot
 dev.off()

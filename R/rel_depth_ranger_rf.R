@@ -98,7 +98,7 @@ ranger_rf <- ranger::ranger(
   data = train_depth_baked,
   #hyperpars based on values from top model which is not saved on all locals
   num.trees = 2000,
-  mtry = 11,
+  mtry = 5,
   keep.inbag = TRUE,
   quantreg = TRUE,
   importance = "permutation"

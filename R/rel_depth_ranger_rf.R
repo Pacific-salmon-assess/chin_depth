@@ -24,11 +24,6 @@ depth_dat_raw1 <- readRDS(
   # approximately 7k detections have no available ROMS data; exclude 
   filter(!is.na(roms_temp))
 
-depth_dat_raw2 <- readRDS(
-  here::here("data", "depth_dat_nobin_FULL.RDS")) %>%
-  filter(!is.na(mean_slope),
-         !is.na(roms_temp))
-
 
 # remove 2022 tag releases (~6k dets) for training model
 depth_dat_raw <- depth_dat_raw1 %>% 

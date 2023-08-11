@@ -29,6 +29,7 @@ if (Sys.info()['sysname'] == "Windows") {
 
 depth_dat_raw <- readRDS(
   here::here("data", "depth_dat_nobin.RDS")) %>% 
+  filter(!is.na(roms_temp)) %>%
   filter(
     !grepl("2022", vemco_code)
   ) 
@@ -46,7 +47,6 @@ ind_folds <- data.frame(
 
 depth_dat <- depth_dat_raw %>% 
   left_join(., ind_folds, by = "vemco_code") %>% 
-  filter(!is.na(roms_temp)) %>%
   dplyr::select(
     depth = pos_depth, rel_depth, logit_rel_depth,
     fl, lipid, stage, utm_x, utm_y, day_night,
@@ -178,27 +178,27 @@ plan(multisession, workers = 8)
 
 
 # fit models (separately)
-gbm_tbl <- model_tbl %>% filter(model_type == "gbm")
-gbm_list <- future_pmap(list("gbm",
-                             gbm_tbl$recipe,
-                             gbm_tbl$train_data),
-                        .f = fit_foo,
-                        .options = furrr_options(seed = TRUE))
-names(gbm_list) <- gbm_tbl$response
-saveRDS(gbm_list,
-        here::here("data", "model_fits", "gbm_model_comparison.rds"))
+# gbm_tbl <- model_tbl %>% filter(model_type == "gbm")
+# gbm_list <- future_pmap(list("gbm",
+#                              gbm_tbl$recipe,
+#                              gbm_tbl$train_data),
+#                         .f = fit_foo,
+#                         .options = furrr_options(seed = TRUE))
+# names(gbm_list) <- gbm_tbl$response
+# saveRDS(gbm_list,
+#         here::here("data", "model_fits", "gbm_model_comparison.rds"))
 gbm_list <- readRDS(here::here("data", "model_fits", "gbm_model_comparison.rds"))
 
 
-rf_tbl <- model_tbl %>% filter(model_type == "rf")
-rf_list <- future_pmap(list("rf",
-                            rf_tbl$recipe,
-                            rf_tbl$train_data),
-                       .f = fit_foo,
-                       .options = furrr_options(seed = TRUE))
-names(rf_list) <- rf_tbl$response
-saveRDS(rf_list,
-        here::here("data", "model_fits", "rf_model_comparison.rds"))
+# rf_tbl <- model_tbl %>% filter(model_type == "rf")
+# rf_list <- future_pmap(list("rf",
+#                             rf_tbl$recipe,
+#                             rf_tbl$train_data),
+#                        .f = fit_foo,
+#                        .options = furrr_options(seed = TRUE))
+# names(rf_list) <- rf_tbl$response
+# saveRDS(rf_list,
+#         here::here("data", "model_fits", "rf_model_comparison.rds"))
 rf_list <- readRDS(here::here("data", "model_fits", "rf_model_comparison.rds"))
 
 
@@ -363,12 +363,12 @@ rf_hyper_plot <- ggplot(rf_dat) +
 
 
 ## export 
-png(here::here("figs", "model_comp", "gmb_hyper_plot.png"), units = "in",
-    height = 5.5, width = 6.25, res = 250)
+png(here::here("figs", "model_comp", "gbm_hyper_plot.png"), units = "in",
+    height = 4.5, width = 7.5, res = 250)
 gbm_hyper_plot
 dev.off()
 
 png(here::here("figs", "model_comp", "rf_hyper_plot.png"), units = "in",
-    height = 5.5, width = 6.25, res = 250)
+    height = 4.5, width = 7.5, res = 250)
 rf_hyper_plot
 dev.off()

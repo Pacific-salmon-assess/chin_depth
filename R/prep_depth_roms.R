@@ -126,33 +126,68 @@ depth_dets1 <- rbind(depth_raw, depth_h) %>%
       grepl("_0.", cu_name) | agg == "Fraser" ~ "FraserSub",
       cu_name == "Lower Columbia River" ~ "LowCol",
       TRUE ~ agg
-    ),
-    # convert small number of above surface (< 6 m) detections to surface
-    depth = ifelse(depth <= 0.1, 0.1, depth)
+    )#,
+    # # convert small number of above surface (< 6 m) detections to surface
+    # depth = ifelse(depth <= 0.1, 0.1, depth)
   ) %>% 
   filter(!region == "fraser",
          !is.na(depth))
 
 
-## CHECK FOR DEAD TAGS ---------------------------------------------------------
+## CHECK FOR FAULTY TAGS -------------------------------------------------------
 
-# deaths <- depth_dets1 %>%
-#   group_by(vemco_code, receiver_name) %>%
-#   mutate(nn = n()) %>%
-#   filter(
-#     nn > 300
-#   )
-# 
-# 
-# ggplot() +
-#   geom_point(data = depth_dets1 %>% filter(vemco_code %in% deaths$vemco_code),
-#              aes(x = date_time, y = depth, fill = region),
-#              shape = 21) +
-#   facet_wrap(~vemco_code, scales = "free_x") +
-#   ggsidekick::theme_sleek()
-# 
+deaths <- depth_dets1 %>%
+  group_by(vemco_code, receiver_name) %>%
+  mutate(nn = n()) %>%
+  filter(
+    nn > 300
+  )
+
+ggplot() +
+  geom_point(data = depth_dets1 %>% filter(vemco_code %in% deaths$vemco_code),
+             aes(x = date_time, y = depth, fill = region),
+             shape = 21) +
+  facet_wrap(~vemco_code, scales = "free_x") +
+  ggsidekick::theme_sleek()
 # no evidence that fish died within detection distance of receiver
-  
+
+# faulty tags
+sensors_fail <- depth_dets1 %>% 
+  mutate(time_stamp = paste(hour, day, month, year, sep = "_")) %>% 
+  group_by(time_stamp, vemco_code) %>% 
+  mutate(
+    sd_depth = sd(depth),
+    n = length(unique(date_time))
+  ) %>% 
+  filter(sd_depth < 0.1 & n > 5) %>% 
+  droplevels()
+
+ggplot(depth_dets1 %>% 
+         filter(vemco_code %in% unique(sensors_fail$vemco_code)[1:12])) +
+  geom_point(aes(x = date_time, y = depth, fill = region),
+             shape = 21) +
+  facet_wrap(~vemco_code, scales = "free_x") +
+  ggsidekick::theme_sleek()
+# no evidence that tags pressure sensors failed permanently
+
+
+# check above surface tags
+surface_tags <- depth_dets1 %>% 
+  group_by(vemco_code) %>% 
+  mutate(max_depth = min(depth)) %>% 
+  filter(max_depth < 0) %>% 
+  pull(vemco_code) %>% 
+  unique()
+
+ggplot(depth_dets1 %>% 
+         filter(vemco_code %in% surface_tags)) +
+  geom_point(aes(x = date_time, y = depth, fill = region),
+             shape = 21) +
+  facet_wrap(~vemco_code, scales = "free_x") +
+  ggsidekick::theme_sleek()
+# no evidence that above surface detections were consistent
+
+
 
 ## EXPORT STATIONS -------------------------------------------------------------
 

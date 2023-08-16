@@ -103,7 +103,7 @@ train_depth_baked <- prep(depth_recipe) %>%
 #         here::here("data", "model_fits", "relative_rf_ranger.rds"))
 
 ranger_rf <- readRDS(here::here("data", "model_fits", "relative_rf_ranger.rds"))
-ranger_rf <- readRDS(here::here("data", "model_fits", "relative_rf_ranger_FULL.rds"))
+# ranger_rf <- readRDS(here::here("data", "model_fits", "relative_rf_ranger_FULL.rds"))
 
 
 # CHECK PREDS ------------------------------------------------------------------
@@ -272,8 +272,13 @@ ggplot(bath_grid %>% filter(local_day == "211")) +
 base_plot <- ggplot() + 
   ggsidekick::theme_sleek() +
   theme(axis.title = element_blank()) +
-  scale_x_continuous(expand = c(0, 0)) +
-  scale_y_continuous(expand = c(0, 0))
+  # set limitsto avoid boundary effects from UTM projection
+  scale_x_continuous(
+    limits = c(210000, 560000), 
+    expand = c(0, 0)
+  ) +
+  scale_y_continuous(limits = c(5100000, 5470000), expand = c(0, 0))
+
 
 
 ## first set are average spatial predictions (i.e. mean biological and temporal 
@@ -320,8 +325,7 @@ rel_depth <- base_plot +
                        direction = -1, 
                        option = "A") +
   theme(legend.position = "top",
-        axis.text = element_blank()) +
-  facet_wrap(~season)
+        axis.text = element_blank()) 
 
 mean_depth <- base_plot +
   geom_raster(data = pred_dat2 %>% filter(season == "summer"), 
@@ -376,7 +380,9 @@ stage_dat <- depth_dat_raw %>%
 
 # subset bath_grid to remove covariates defined in predictive tibble
 bath_grid_trim <- bath_grid %>% 
-  select(-c(local_day, moon_illuminated, det_dayx, det_dayy)) %>% 
+  select(
+    -c(local_day, moon_illuminated, det_dayx, det_dayy, day_night_night)
+  ) %>% 
   group_by(season) %>% 
   group_nest()
 
@@ -388,13 +394,15 @@ z_range <- c(mean(depth_dat_summer$zoo) - sd(depth_dat_summer$zoo),
              mean(depth_dat_summer$zoo) + sd(depth_dat_summer$zoo))
 
 pred_tbl <- tibble(
-  contrast = rep(c("season", "maturity", "moon light", "temp", "zoo"), each = 2),
-  local_day = c(46, 211, 211, 211, 211, 211, 211, 211, 211, 211),
-  stage_mature = c(0, 0, 0, 1, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5),
-  moon_illuminated = c(0.5, 0.5, 0.5, 0.5, 0, 1, 0.5, 0.5, 0.5, 0.5),
+  contrast = rep(c("season", "maturity", "moon light", 
+                   "day night", "temp", "zoo"), each = 2),
+  local_day = c(46, 211, 211, 211, 211, 211, 211, 211, 211, 211, 211, 211),
+  stage_mature = c(0, 0, 0, 1, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5),
+  moon_illuminated = c(0.5, 0.5, 0.5, 0.5, 0, 1, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5),
+  day_night_night = c(0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0, 1, 0.5, 0.5, 0.5, 0.5),
   #leave NaNs to be replaced by bath_grid_trim except for temp and zoo contrasts
-  adj_temp = c(rep(NaN, 6), t_range[1], t_range[2], NaN, NaN),
-  adj_zoo = c(rep(NaN, 8), z_range[1], z_range[2])
+  adj_temp = c(rep(NaN, 8), t_range[1], t_range[2], NaN, NaN),
+  adj_zoo = c(rep(NaN, 10), z_range[1], z_range[2])
 ) %>% 
   mutate(
     det_dayx = sin(2 * pi * local_day / 365),
@@ -558,6 +566,19 @@ zoo_map <- base_plot +
   scale_fill_gradient2() +
   labs(title = "Zooplankton Effects")
 
+dn_eff <- pred_dat %>% 
+  filter(contrast == "day night") %>% 
+  select(day_night_night, mean_bathy:shore_dist, utm_x_m, utm_y_m, rel_pred_med) %>%
+  pivot_wider(names_from = day_night_night, values_from = rel_pred_med) %>%
+  # negative is deeper at night, pos deeper during day 
+  mutate(dn_diff = (`0` - `1`))
+dn_map <- base_plot +
+  geom_raster(data = dn_eff, 
+              aes(x = utm_x_m, y = utm_y_m, fill = dn_diff)) +
+  geom_sf(data = coast_utm) +
+  scale_fill_gradient2() +
+  labs(title = "Day/Night Effects")
+
 
 # combine season and maturity predictions and plot joined version
 # season_eff2 <- season_eff %>% 
@@ -606,6 +627,19 @@ base_plot +
     axis.text = element_text(size = 8)
   )
 dev.off()
+
+
+
+# day-night contrast
+pred_dat %>% 
+  filter(contrast == "day night") %>% 
+  mutate(rel_int_width = rel_pred_up - rel_pred_lo) %>% 
+  select(day_night_night, mean_bathy:shore_dist, utm_x_m, utm_y_m, 
+         rel_pred_med, rel_int_width) %>% 
+  group_by(day_night_night) %>% 
+  summarize(mean_rel_depth = mean(rel_pred_med),
+            mean_int_width = mean(rel_int_width))
+
 
 
 ## LATENT SPATIAL PROCESSES ----------------------------------------------------

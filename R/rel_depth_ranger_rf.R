@@ -115,7 +115,7 @@ dum <- train_depth %>%
   mutate(mean_pred = obs_preds$predictions,
          mean_pred_real = mean_pred * max_bathy,
          depth_real = depth * max_bathy,
-         split_group = "train 2019-21")
+         split_group = "Train 2019-21")
 plot(depth ~ mean_pred, dum)
 plot(depth_real ~ mean_pred_real, dum)
 
@@ -131,7 +131,7 @@ dum_test <- test_depth %>%
   mutate(mean_pred = test_preds$predictions,
          mean_pred_real = mean_pred * max_bathy,
          depth_real = depth * max_bathy,
-         split_group = "test 2019-21")
+         split_group = "Test 2019-21")
 
 
 # 2022 predictions
@@ -146,13 +146,13 @@ dum_test_22 <- test_depth_22 %>%
          mean_pred = test_preds_22$predictions,
          mean_pred_real = mean_pred * max_bathy,
          depth_real = depth * max_bathy,
-         split_group = "test 2022")
+         split_group = "Test 2022")
 
 all_preds <- do.call(rbind,
                      list(dum, dum_test, dum_test_22)) %>% 
   mutate(
     split_group = fct_relevel(
-      as.factor(split_group), "train 2019-21", after = 0)
+      as.factor(split_group), "Train 2019-21", after = 0)
   )
 
 fit_obs <- ggplot() +
@@ -224,6 +224,10 @@ imp_plot <- ggplot(imp_dat, aes(x = fct_reorder(var_f, - val), y = val)) +
   scale_fill_brewer(type = "qual", palette = "Set1", name = "Category") +
   theme(
     axis.text.x = element_text(angle = 45, hjust = 1)
+  ) +
+  scale_y_continuous(
+    limits = c(0, 0.05),
+    expand = c(0, 0)
   )
 
 png(here::here("figs", "ms_figs_rel", "importance_quantreg.png"),
@@ -263,9 +267,6 @@ bath_grid <- bath_grid_in %>%
          utm_y > 5100) %>% 
   left_join(., roms_month_means, by = "season")
 
-
-ggplot(bath_grid %>% filter(local_day == "211")) +
-  geom_raster(aes(x = utm_x, y = utm_y, fill = mean_bathy))
 
 
 # base template plot for maps
@@ -339,7 +340,7 @@ var_depth <- base_plot +
   geom_raster(data = pred_dat2 %>% filter(season == "summer"), 
               aes(x = utm_x_m, y = utm_y_m, fill = pred_int_width)) +
   geom_sf(data = coast_utm) +
-  scale_fill_viridis_c(name = "Prediction\nInt. Width (m)", 
+  scale_fill_viridis_c(name = "90% Prediction\nInt. Width (m)", 
                        option = "C",
                        direction = -1)  +
   theme(legend.position = "top",
@@ -355,6 +356,23 @@ png(here::here("figs", "ms_figs_rel", "avg_depth.png"), height = 5.5, width = 7,
     units = "in", res = 250)
 avg_depth
 dev.off()
+
+# zoom in on JdF
+# base_plot +
+#   geom_raster(data = pred_dat2 %>% 
+#                 filter(season == "summer",
+#                        utm_x_m > 370000 & utm_x_m < 470000,
+#                        utm_y_m > 5300000 & utm_y_m < 5450000), 
+#               aes(x = utm_x_m, y = utm_y_m, fill = pred_med)) +
+#   geom_sf(data = coast_utm) +
+#   scale_fill_viridis_c(name = "Mean Depth (m)",
+#                        direction = -1) +
+#   theme(legend.position = "top") +
+#   scale_x_continuous(
+#     limits = c(370000, 470000), 
+#     expand = c(0, 0)
+#   ) +
+#   scale_y_continuous(limits = c(5300000, 5450000), expand = c(0, 0))
 
 
 ## generate spatial contrasts
@@ -607,7 +625,7 @@ comb_preds <- list(
   mutate(
     comp = factor(
       comp, levels = c("moonlight", "roms_temp", "zoo", "maturity"),
-      labels = c("lunar cycle", "SST", "zooplankton", "maturity/size/lipid")
+      labels = c("Lunar Cycle", "SST", "Zooplankton", "Maturity + Size + Lipid")
     )
   )
 

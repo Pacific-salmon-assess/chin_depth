@@ -87,7 +87,7 @@ train_depth_baked <- prep(depth_recipe) %>%
 #pull model attributes from top ranger
 # rf_list <- readRDS(here::here("data", "model_fits", "rf_model_comparison.rds"))
 # top_mod <- rf_list[[2]]$top_model
-# 
+
 # ranger_rf <- ranger::ranger(
 #   depth ~ .,
 #   data = train_depth_baked,
@@ -96,14 +96,14 @@ train_depth_baked <- prep(depth_recipe) %>%
 #   mtry = 5,
 #   keep.inbag = TRUE,
 #   quantreg = TRUE,
-#   importance = "permutation"
+#   importance = "permutation",
+#   splitrule = "extratrees"
 # )
-
+# 
 # saveRDS(ranger_rf,
 #         here::here("data", "model_fits", "relative_rf_ranger.rds"))
 
 ranger_rf <- readRDS(here::here("data", "model_fits", "relative_rf_ranger.rds"))
-# ranger_rf <- readRDS(here::here("data", "model_fits", "relative_rf_ranger_FULL.rds"))
 
 
 # CHECK PREDS ------------------------------------------------------------------
@@ -216,18 +216,25 @@ imp_dat <- data.frame(
     )
   ) 
   
+shape_pal <- c(21, 22, 23, 24)
+names(shape_pal) <- levels(imp_dat$category)
 
 imp_plot <- ggplot(imp_dat, aes(x = fct_reorder(var_f, - val), y = val)) +
-  geom_point(aes(fill = category), shape = 21, size = 2) +
+  geom_point(aes(fill = category, shape = category), size = 2) +
   ggsidekick::theme_sleek() +
   labs(x = "Covariate", y = "Relative Importance") +
   scale_fill_brewer(type = "qual", palette = "Set1", name = "Category") +
+  scale_shape_manual(values = shape_pal, guide = "none") +
   theme(
     axis.text.x = element_text(angle = 45, hjust = 1)
   ) +
   scale_y_continuous(
-    limits = c(0, 0.05),
+    limits = c(0, 0.045),
     expand = c(0, 0)
+  ) +
+  guides(
+    fill = guide_legend(
+      override.aes = list(shape = shape_pal))
   )
 
 png(here::here("figs", "ms_figs_rel", "importance_quantreg.png"),
@@ -359,17 +366,17 @@ dev.off()
 
 # zoom in on JdF
 # base_plot +
-#   geom_raster(data = pred_dat2 %>% 
+#   geom_raster(data = pred_dat2 %>%
 #                 filter(season == "summer",
 #                        utm_x_m > 370000 & utm_x_m < 470000,
-#                        utm_y_m > 5300000 & utm_y_m < 5450000), 
+#                        utm_y_m > 5300000 & utm_y_m < 5450000),
 #               aes(x = utm_x_m, y = utm_y_m, fill = pred_med)) +
 #   geom_sf(data = coast_utm) +
 #   scale_fill_viridis_c(name = "Mean Depth (m)",
 #                        direction = -1) +
 #   theme(legend.position = "top") +
 #   scale_x_continuous(
-#     limits = c(370000, 470000), 
+#     limits = c(370000, 470000),
 #     expand = c(0, 0)
 #   ) +
 #   scale_y_continuous(limits = c(5300000, 5450000), expand = c(0, 0))
@@ -797,22 +804,22 @@ pred_foo <- function(preds_in, ...) {
     )
 }
 
-counterfac_tbl <- tibble(
-  var_in = c("mean_bathy", "fl", "utm_x", "utm_y",
-             "local_day", "lipid", "thermo_depth",
-             "roms_temp", "zoo", "oxygen", "shore_dist",
-             "moon_illuminated", "mean_slope"
-  )) %>%
-  mutate(
-    pred_dat_in = purrr::map(var_in,
-                             gen_pred_dat),
-    preds_ci = purrr::map(pred_dat_in,
-                          pred_foo,
-                          type = "se",
-                          se.method = "infjack")
-  )
-saveRDS(counterfac_tbl,
-        here::here("data", "counterfac_preds_ci.rds"))
+# counterfac_tbl <- tibble(
+#   var_in = c("mean_bathy", "fl", "utm_x", "utm_y",
+#              "local_day", "lipid", "thermo_depth",
+#              "roms_temp", "zoo", "oxygen", "shore_dist",
+#              "moon_illuminated", "mean_slope"
+#   )) %>%
+#   mutate(
+#     pred_dat_in = purrr::map(var_in,
+#                              gen_pred_dat),
+#     preds_ci = purrr::map(pred_dat_in,
+#                           pred_foo,
+#                           type = "se",
+#                           se.method = "infjack")
+#   )
+# saveRDS(counterfac_tbl,
+#         here::here("data", "counterfac_preds_ci.rds"))
 counterfac_tbl <- readRDS(here::here("data", "counterfac_preds_ci.rds"))
 
 

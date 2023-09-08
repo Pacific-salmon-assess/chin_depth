@@ -681,6 +681,17 @@ n_tags_lipid <- bio_dat %>%
   group_by(stage, agg) %>% 
   tally()
 
+# summary stats
+bio_dat %>% 
+  group_by(stage) %>% 
+  summarize(
+    mean_fl = mean(fl, na.rm = T),
+    mean_lipid = mean(lipid, na.rm = T),
+    sd_fl = sd(fl, na.rm = T),
+    sd_lipid = sd(lipid, na.rm = T),
+    n = n()
+  )
+
 lipid_box <- ggplot(
   bio_dat %>% 
     filter(!is.na(lipid)), 
@@ -827,8 +838,6 @@ dev.off()
 
 
 ## DETECTION/BATHY MAPS --------------------------------------------------------
-
-## NOTE CURRENTLY EXCLUDES DETS WITH MISSING ROMS
 
 library(maptools)
 library(rmapshaper)
@@ -1108,65 +1117,4 @@ png(here::here("figs", "ms_figs_rel", "release_locations.png"),
     height = 3, width = 6.5, res = 250, units = "in")
 rel_locs
 dev.off()
-
-
-
-# 
-# 
-# 
-# 
-# # individual depth distributions by time and terminal location
-# depth_dat2 <- depth_raw %>%
-#   mutate(date_time_local = lubridate::with_tz(date_time, 
-#                                               tzone = "America/Los_Angeles"),
-#          year = lubridate::year(date_time_local),
-#          n_det = length(unique(date_time)),
-#          fl_code = as.factor(paste(fl, vemco_code, sep = "_")),
-#          plot_group = case_when(
-#            stage == "immature" ~ "immature",
-#            TRUE ~ paste(agg, year, sep = "_")
-#          )) %>%
-#   filter(!n_det < 10,
-#          !is.na(agg)) %>%
-#   ungroup()
-# depth_list <- split(depth_dat2, depth_dat2$plot_group)
-# 
-# 
-# route_pal <- RColorBrewer::brewer.pal(length(unique(depth_dat2$region)),
-#                                       "Spectral")
-# names(route_pal) <- levels(fct_rev(depth_dat2$region))
-# 
-# 
-# trim_depth <- depth_dat2 %>%
-#   filter(vemco_code %in% c("7703_2019", "7707_2019", "7708_2019", "7696_2019",
-#                            "9969_2020", "10017_2020", "7700_2019", "9986_2020",
-#                            "7921_2019")) %>%
-#   ggplot(., aes(x = date_time_local, y = -1 * depth, fill = region)) +
-#   geom_point(shape = 21, alpha = 0.4) +
-#   scale_fill_manual(values = route_pal, name = "") +
-#   labs(x = "Timestamp", y = "Depth (m)") +
-#   ggsidekick::theme_sleek() +
-#   facet_wrap(~fct_reorder(vemco_code, desc(as.numeric(as.factor(stage))))) +
-#   theme(legend.position = "top")
-# 
-# png(here::here("figs", "trim_ind_profiles.png"), width = 8, height = 5,
-#     res = 200, units = "in")
-# trim_depth
-# dev.off()
-# 
-# 
-# # full plot list of absolute depth
-# depth_plots <- map2(depth_list, names(depth_list), .f = function(x, tit) {
-#   ggplot(x, aes(x = date_time_local, y = -1 * depth, fill = region)) +
-#     geom_point(shape = 21, alpha = 0.4) +
-#     scale_fill_manual(values = route_pal, name = "") +
-#     labs(title = tit, x = "Timestamp", y = "Depth (m)") +
-#     lims(y = c(-1 * max(depth_dat2$depth), 0)) +
-#     ggsidekick::theme_sleek() +
-#     facet_wrap(~fct_reorder(fl_code, desc(fl)))
-# })
-# 
-# pdf(here::here("figs", "ind_profiles.pdf"))
-# depth_plots
-# dev.off()
 

@@ -60,6 +60,8 @@ stage_dat <- readRDS(here::here("data", "agg_lifestage_df.RDS")) %>%
   filter(!is.na(vemco_code)) %>% 
   select(vemco_code, acoustic_type, fl, stage_predicted, lipid, cu_name, agg)  
 
+stage_dat %>% group_by(stage_predicted) %>% tally()
+
 
 # ~2% of tags lack energy density estimates, impute
 interp_stage_dat <- VIM::kNN(stage_dat, k = 5) %>% 

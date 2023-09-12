@@ -174,7 +174,7 @@ fit_foo <- function(model, recipe, train_data) {
 
 
 # set up parallel
-plan(multisession, workers = 8)
+plan(multisession, workers = 7)
 
 
 # fit models (separately)
@@ -216,11 +216,12 @@ top_rangers <- purrr::map2(rf_list, rf_train_list, function (x, y) {
     bake(.,
          new_data = y)
   
-  ranger_rf <- ranger::ranger(
+  ranger::ranger(
     depth_var ~ .,
     data = baked_dat,
     num.trees = top_mod$param$num.trees,
-    mtry = top_mod$tuneValue$mtry
+    mtry = top_mod$tuneValue$mtry,
+    splitrule = top_mod$splitrule
   )
 })
 

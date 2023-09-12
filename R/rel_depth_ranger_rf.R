@@ -640,7 +640,9 @@ rel_latent <- base_plot +
   geom_sf(data = coast_utm) +
   scale_fill_viridis_c(name = "Predicted\nBathymetric\nDepth Ratio",
                        direction = -1, 
-                       option = "A") 
+                       option = "A") +
+  theme(legend.position = "top",
+        legend.key.size = unit(0.75, 'cm'))
 
 
 # COUNTERFACTUAL PREDICT -------------------------------------------------------
@@ -760,10 +762,11 @@ plot_foo <- function (data, ...) {
     scale_x_continuous(expand = c(0, 0))+
     theme(
       axis.title.y = element_blank()
-    ) # +
-    # scale_y_continuous(breaks = c(0, -0.25, -0.5, -0.75, -1.0),
-    #                    labels = c("0", "0.25", "0.5", "0.75", "1.0"),
-    #                    limits = c(-0.75, -0.05))
+    )  +
+    scale_y_continuous(breaks = c(-0.2, -0.4, -0.6),
+                       labels = c("0.2", "0.4", "0.6"),
+                       limits = c(-0.6, -0.15)
+                       )
 }
 
 
@@ -790,6 +793,18 @@ slope_cond <- counterfac_tbl %>%
   plot_foo(data = .,
            x = "mean_slope") +  
   labs(x = "Mean Slope") 
+
+dist_cond <- counterfac_tbl %>% 
+  filter(var_in == "shore_dist") %>% 
+  pull(preds_ci) %>% 
+  as.data.frame() %>% 
+  plot_foo(data = .,
+           x = "shore_dist") +  
+  labs(x = "Mean Distance\nto Shore (km)") +
+  scale_x_continuous(breaks = c(15000, 35000, 55000),
+                     labels = c("15", "35", "55"),
+                     limits = c(5, 63000),
+                     expand = c(0, 0))
 
 
 # maturity predictions
@@ -822,11 +837,15 @@ mat_cond <- mat_preds %>%
   ggplot(.) +
   geom_pointrange(
     aes(x = stage_f, y = mean, ymin = lo, ymax = up)) +
-  labs(x = "Maturity Stage") +
+  labs(x = "Maturity Stage +\nLength + Lipid") +
   ggsidekick::theme_sleek() +
   theme(
     axis.title.y = element_blank()
-  ) 
+  ) +
+  scale_y_continuous(breaks = c(-0.2, -0.4, -0.6),
+                     labels = c("0.2", "0.4", "0.6"),
+                     limits = c(-0.6, -0.15)
+  )
 
 
 # day-night predictions
@@ -846,7 +865,7 @@ dn_pred_in <- rbind(
   )
 dn_preds <- pred_foo(dn_pred_in, type = "se", se.method = "infjack")
 
-dn_cond <- mat_preds %>% 
+dn_cond <- dn_preds %>% 
   mutate(
     lo = mean + (qnorm(0.025) * se),
     up = mean + (qnorm(0.975) * se),
@@ -856,129 +875,41 @@ dn_cond <- mat_preds %>%
   ggplot(.) +
   geom_pointrange(
     aes(x = dn_f, y = mean, ymin = lo, ymax = up)) +
-  labs(x = "Diel Cycle") +
+  labs(x = "Diel\nCycle") +
   ggsidekick::theme_sleek() +
   theme(
     axis.title.y = element_blank()
-  ) 
+  ) +
+  scale_y_continuous(breaks = c(-0.2, -0.4, -0.6),
+                     labels = c("0.2", "0.4", "0.6"),
+                     limits = c(-0.6, -0.15)
+  )
 
 
 panel1 <- cowplot::plot_grid(
   yday_cond,
   bathy_cond,
-  nrow = 1
+  slope_cond,
+  dist_cond,
+  mat_cond,
+  dn_cond,
+  nrow = 2
 )
 pp <- gridExtra::grid.arrange(
   gridExtra::arrangeGrob(
     panel1, 
-    left = grid::textGrob("Predicted Bathymetric\nDepth Ratio", rot = 90)
+    left = grid::textGrob("Predicted Bathymetric Depth Ratio", rot = 90)
   )
 )
 
 png(here::here("figs", "ms_figs_rel", "counterfac_effects.png"),
-    height = 5.5, width = 5.5, 
+    height = 4.5, width = 8.5, 
     units = "in", res = 250)
 cowplot::plot_grid(
   pp,
   rel_latent,
-  nrow = 2
+  ncol = 2,
+  rel_widths = c(1.5, 1)
 ) 
 dev.off()
-
-
-temp_cond <- counterfac_tbl %>% 
-  filter(var_in == "roms_temp") %>% 
-  pull(preds_ci) %>% 
-  as.data.frame() %>% 
-  plot_foo(data = .,
-           x = "roms_temp") +  
-  theme(
-    axis.title.y = element_blank()
-  ) 
-zoo_cond <- counterfac_tbl %>% 
-  filter(var_in == "zoo") %>% 
-  pull(preds_ci) %>% 
-  as.data.frame() %>% 
-  plot_foo(data = .,
-           x = "zoo") +  
-  theme(
-    axis.title.y = element_blank()
-  ) 
-moon_cond <- counterfac_tbl %>% 
-  filter(var_in == "moon_illuminated") %>% 
-  pull(preds_ci) %>% 
-  as.data.frame() %>% 
-  plot_foo(data = .,
-           x = "moon_illuminated") +  
-  theme(
-    axis.title.y = element_blank()
-  ) 
-
-
-# pdf for region specific relationships
-# pdf(here::here("figs", "ms_figs_rel", "bathy_counterfac_region.pdf"),
-#     height = 6, width = 8)
-# ggplot(counterfac_tbl$preds[[1]], aes(x = mean_bathy, colour = site)) +
-#   geom_line(aes(y = mean)) +
-#   geom_ribbon(aes(ymin = lo, ymax = up, fill = site), alpha = 0.2) +
-#   ggsidekick::theme_sleek() +
-#   scale_x_continuous(expand = c(0, 0)) +
-#   facet_wrap(~site)
-# dev.off()
-
-
-## categorical predictions for day/night and maturity impacts
-# new_dat_trim <- new_dat[1:2, ] %>% 
-#   mutate(
-#     det_dayx = sin(2 * pi * local_day / 365),
-#     det_dayy = cos(2 * pi * local_day / 365)
-#   ) 
-# mat_dat <- new_dat_trim %>%  
-#   mutate(
-#     stage_mature = c(0, 1),
-#     stage = factor(stage_mature, labels = c("immature", "mature"))
-#   ) %>% 
-#   pred_foo(., 
-#            type = "quantiles") %>% 
-#   mutate(
-#     lo = -1 * lo, #(mean + (qnorm(0.025) * se)),
-#     up = -1 * up, #(mean + (qnorm(0.975) * se)),
-#     mean = -1 * mean
-#   ) 
-# 
-# mat_plot <- ggplot(mat_dat, aes(x = stage)) +
-#   geom_pointrange(aes(y = mean, ymin = lo, ymax = up)) +
-#   ggsidekick::theme_sleek() +
-#   labs(title = "Maturity Counterfactual") +
-#   scale_y_continuous(breaks = c(0, -0.25, -0.5, -0.75, -1.0),
-#                      labels = c("0", "0.25", "0.5", "0.75", "1.0"),
-#                      limits = c(-1, 0))
-# 
-# dn_plot <- new_dat_trim %>% 
-#   mutate(
-#     day_night_night = c(0, 1)
-#   ) %>% 
-#   pred_foo(., 
-#            type = "quantiles") %>% 
-#   mutate(
-#     lo = -1 * lo, #(mean + (qnorm(0.025) * se)),
-#     up = -1 * up, #(mean + (qnorm(0.975) * se)),
-#     mean = -1 * mean
-#   ) %>% 
-#   ggplot(., aes(x = as.factor(day_night_night))) +
-#   geom_pointrange(aes(y = mean, ymin = lo, ymax = up)) +
-#   ggsidekick::theme_sleek() +
-#   labs(title = "Day/Night Counterfactual") +
-#   scale_y_continuous(breaks = c(0, -0.25, -0.5, -0.75, -1.0),
-#                      labels = c("0", "0.25", "0.5", "0.75", "1.0"),
-#                      limits = c(-1, 0))
-# 
-# 
-# pdf(here::here("figs", "ms_figs_rel", "counterfactual_ranger.pdf"),
-#     height = 6, width = 8)
-# plot_list
-# mat_plot
-# dn_plot
-# dev.off()
-# 
 

@@ -128,9 +128,7 @@ depth_dets1 <- rbind(depth_raw, depth_h) %>%
       grepl("_0.", cu_name) | agg == "Fraser" ~ "FraserSub",
       cu_name == "Lower Columbia River" ~ "LowCol",
       TRUE ~ agg
-    )#,
-    # # convert small number of above surface (< 6 m) detections to surface
-    # depth = ifelse(depth <= 0.1, 0.1, depth)
+    )
   ) %>% 
   filter(!region == "fraser",
          !is.na(depth))
@@ -667,11 +665,18 @@ bio_dat <- rbind(
       cu_name == "Lower Columbia River" ~ "LowCol",
       TRUE ~ agg
     ),
-    agg = fct_recode(
-      agg, "Cali." = "Cali", "Upriver\nCol." = "Col", "Fraser\nSub." = "FraserSub",
-      "Fraser\nYear." = "FraserYear", "Lower\nCol." = "LowCol",
-      "Puget\nSound" = "PugetSo", "WA/OR." = "WA_OR"
-    )
+    # agg = fct_recode(
+    #   agg, "Cali." = "Cali", "Upriver\nCol." = "Col", "Fraser\nSub." = "FraserSub",
+    #   "Fraser\nYear." = "FraserYear", "Lower\nCol." = "LowCol",
+    #   "Puget\nSound" = "PugetSo", "WA/OR." = "WA_OR"
+    # ),
+    agg = factor(
+      agg,
+      levels = c("Cali", "WA_OR", "Col", "LowCol", "PugetSo", "FraserYear",
+                 "FraserSub", "ECVI", "WCVI"),
+      labels = c("Cali.", "WA/OR.", "Upriver\nCol.", "Lower\nCol.", 
+                 "Puget\nSound", "Fraser\nYear.", "Fraser\nSub.", "ECVI", 
+                 "WCVI"))
   )
 
 n_tags_fl <- bio_dat %>% 
@@ -692,7 +697,8 @@ bio_dat %>%
     sd_fl = sd(fl, na.rm = T),
     sd_lipid = sd(lipid, na.rm = T),
     n = n()
-  )
+  ) 
+  
 
 lipid_box <- ggplot(
   bio_dat %>% 
@@ -747,6 +753,8 @@ write.csv(stock_tbl, here::here("data", "stock_definitions.csv"))
 
 ## DEPTH SCATTER FIGURE --------------------------------------------------------
 
+depth_dat2 <- readRDS(here::here("data", "depth_dat_nobin.RDS"))
+
 bottom_dot <- ggplot(depth_dat2 %>% 
                        filter(
                          !is.na(roms_temp)
@@ -760,10 +768,12 @@ bottom_dot <- ggplot(depth_dat2 %>%
   scale_y_continuous(
     breaks = c(0, -100, -200, -300), 
     labels = seq(0, 300, by = 100)
-  )
+  ) +
+  facet_wrap(~stage) +
+  theme(legend.position = "none")
 
 png(here::here("figs", "ms_figs_rel", "depth_vs_bathy.png"),
-    height = 3, width = 6.5, res = 250, units = "in")
+    height = 3, width = 5.5, res = 250, units = "in")
 bottom_dot
 dev.off()
 

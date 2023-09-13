@@ -80,20 +80,20 @@ train_depth_baked <- prep(depth_recipe) %>%
 # rf_list <- readRDS(here::here("data", "model_fits", "rf_model_comparison.rds"))
 # top_mod <- rf_list[[2]]$top_model
 
-ranger_rf_gsi <- ranger::ranger(
-  depth ~ .,
-  data = train_depth_baked,
-  #hyperpars based on values from top model which is not saved on all locals
-  num.trees = 2500,
-  mtry = 13,
-  keep.inbag = TRUE,
-  quantreg = TRUE,
-  importance = "permutation",
-  splitrule = "extratrees"
-)
-
-saveRDS(ranger_rf_gsi,
-        here::here("data", "model_fits", "relative_rf_ranger_gsi.rds"))
+# ranger_rf_gsi <- ranger::ranger(
+#   depth ~ .,
+#   data = train_depth_baked,
+#   #hyperpars based on values from top model which is not saved on all locals
+#   num.trees = 2500,
+#   mtry = 13,
+#   keep.inbag = TRUE,
+#   quantreg = TRUE,
+#   importance = "permutation",
+#   splitrule = "extratrees"
+# )
+# 
+# saveRDS(ranger_rf_gsi,
+#         here::here("data", "model_fits", "relative_rf_ranger_gsi.rds"))
 ranger_rf_gsi <- readRDS(here::here("data", "model_fits", "relative_rf_ranger_gsi.rds"))
 
 

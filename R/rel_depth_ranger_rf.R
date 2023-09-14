@@ -116,8 +116,8 @@ dum <- train_depth %>%
          mean_pred_real = mean_pred * max_bathy,
          depth_real = depth * max_bathy,
          split_group = "Train 2019-21")
-plot(depth ~ mean_pred, dum)
-plot(depth_real ~ mean_pred_real, dum)
+# plot(depth ~ mean_pred, dum)
+# plot(depth_real ~ mean_pred_real, dum)
 
 
 # hold out predictions
@@ -492,12 +492,6 @@ moon_eff <- pred_dat %>%
   pivot_wider(names_from = moon_illuminated, values_from = rel_pred_med) %>%
   # negative is deeper with full moonlight, pos deeper with no moonlight 
   mutate(moon_diff = (`0` - `1`))
-moonlight_map <- base_plot +
-  geom_raster(data = moon_eff, 
-              aes(x = utm_x_m, y = utm_y_m, fill = moon_diff)) +
-  geom_sf(data = coast_utm) +
-  scale_fill_gradient2() +
-  labs(title = "Moonlight Effects")
 
 sst_eff <- pred_dat %>%
   filter(contrast == "temp") %>%
@@ -507,12 +501,6 @@ sst_eff <- pred_dat %>%
   pivot_wider(names_from = roms_temp_f, values_from = rel_pred_med) %>%
   # negative is deeper at higher temps, positive deeper at lower temps
   mutate(temp_diff = (low - high))
-sst_map <- base_plot +
-  geom_raster(data = sst_eff,
-              aes(x = utm_x_m, y = utm_y_m, fill = temp_diff)) +
-  geom_sf(data = coast_utm) +
-  scale_fill_gradient2() +
-  labs(title = "SST Effects")
 
 zoo_eff <- pred_dat %>%
   filter(contrast == "zoo") %>%
@@ -522,13 +510,6 @@ zoo_eff <- pred_dat %>%
   pivot_wider(names_from = zoo_f, values_from = rel_pred_med) %>%
   # negative is deeper at higher zoo conc, positive deeper at lower zoo
   mutate(zoo_diff = (low - high))
-zoo_map <- base_plot +
-  geom_raster(data = zoo_eff,
-              aes(x = utm_x_m, y = utm_y_m, fill = zoo_diff)) +
-  geom_sf(data = coast_utm) +
-  scale_fill_gradient2() +
-  labs(title = "Zooplankton Effects")
-
 oxy_eff <- pred_dat %>% 
   filter(contrast == "oxy") %>% 
   mutate(oxy_f = factor(oxygen, labels = c("low", "high"))) %>% 
@@ -536,13 +517,6 @@ oxy_eff <- pred_dat %>%
   pivot_wider(names_from = oxy_f, values_from = rel_pred_med) %>%
   # negative is deeper at high oxy conc, pos deeper during low oxy conc 
   mutate(oxy_diff = (low - high))
-oxy_map <- base_plot +
-  geom_raster(data = oxy_eff, 
-              aes(x = utm_x_m, y = utm_y_m, fill = oxy_diff)) +
-  geom_sf(data = coast_utm) +
-  scale_fill_gradient2() +
-  labs(title = "Oxygen Effects")
-
 
 # combine season and maturity predictions and plot joined version
 # season_eff2 <- season_eff %>% 
@@ -591,6 +565,7 @@ base_plot +
   facet_wrap(~comp) +
   theme(legend.position = "top") +
   theme(
+    legend.key.size = unit(0.75, 'cm'),
     axis.text = element_text(size = 8)
   )
 dev.off()
@@ -635,9 +610,6 @@ pred_latent2 <- pred_latent %>%
     utm_y_m = utm_y * 1000,
     pred_int_width = pred_up - pred_lo
   ) 
-
-
-## TODO: move legend to inset
 
 # plot that is added to counterfac panel below
 rel_latent <- base_plot +

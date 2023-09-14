@@ -342,8 +342,8 @@ gbm_dat <- map2(names(gbm_list), gbm_list, function (name, x) {
 }) %>% 
   bind_rows() 
 gbm_hyper_plot <- ggplot(gbm_dat) +
-  geom_point(aes(x = n.trees, y = RMSE, color = interaction.depth,
-                 shape = shrinkage)) +
+  geom_line(aes(x = n.trees, y = RMSE, color = interaction.depth,
+                 lty = shrinkage)) +
   facet_grid(response~n.minobsinnode, scales = "free_y") +
   theme(legend.position = "top") +
   ggsidekick::theme_sleek()
@@ -351,13 +351,11 @@ gbm_hyper_plot <- ggplot(gbm_dat) +
 rf_dat <- map2(names(rf_list), rf_list, function (name, x) {
   x$results %>% 
     mutate(response = name,
-           mtry = as.factor(mtry),
            min.node.size = as.factor(min.node.size))
 }) %>% 
   bind_rows() 
 rf_hyper_plot <- ggplot(rf_dat) +
-  geom_point(aes(x = mtry, y = RMSE, color = splitrule,
-                 shape = min.node.size)) +
+  geom_line(aes(x = mtry, y = RMSE, color = splitrule)) +
   facet_grid(response~n_trees, scales = "free_y") +
   theme(legend.position = "top") +
   ggsidekick::theme_sleek()

@@ -85,23 +85,23 @@ train_depth_baked <- prep(depth_recipe) %>%
          dplyr::select(-ind_block, -max_bathy))
 
 #pull model attributes from top ranger
-rf_list <- readRDS(here::here("data", "model_fits", "rf_model_comparison.rds"))
-top_mod <- rf_list[[2]]$top_model
-
-ranger_rf <- ranger::ranger(
-  depth ~ .,
-  data = train_depth_baked,
-  #hyperpars based on values from top model which is not saved on all locals
-  num.trees = 2500,
-  mtry = 13,
-  keep.inbag = TRUE,
-  quantreg = TRUE,
-  importance = "permutation",
-  splitrule = "extratrees"
-)
-
-saveRDS(ranger_rf,
-        here::here("data", "model_fits", "relative_rf_ranger.rds"))
+# rf_list <- readRDS(here::here("data", "model_fits", "rf_model_comparison.rds"))
+# top_mod <- rf_list[[2]]$top_model
+# 
+# ranger_rf <- ranger::ranger(
+#   depth ~ .,
+#   data = train_depth_baked,
+#   #hyperpars based on values from top model which is not saved on all locals
+#   num.trees = 2500,
+#   mtry = 13,
+#   keep.inbag = TRUE,
+#   quantreg = TRUE,
+#   importance = "permutation",
+#   splitrule = "extratrees"
+# )
+# 
+# saveRDS(ranger_rf,
+#         here::here("data", "model_fits", "relative_rf_ranger.rds"))
 
 ranger_rf <- readRDS(here::here("data", "model_fits", "relative_rf_ranger.rds"))
 
@@ -419,13 +419,18 @@ z_range <- c(mean(depth_dat_summer$zoo) - sd(depth_dat_summer$zoo),
 o_range <- c(mean(depth_dat_summer$oxygen) - sd(depth_dat_summer$oxygen),
              mean(depth_dat_summer$oxygen) + sd(depth_dat_summer$oxygen))
 
+# define different counterfactual contrasts
 pred_tbl <- tibble(
   contrast = rep(c("season", "maturity", "moon light", 
                    "day night", "temp", "zoo", "oxy"), each = 2),
-  local_day = c(46, 211, 211, 211, 211, 211, 211, 211, 211, 211, 211, 211, 211, 211),
-  stage_mature = c(0, 0, 0, 1, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5),
-  moon_illuminated = c(0.5, 0.5, 0.5, 0.5, 0, 1, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5),
-  day_night_night = c(0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0, 1, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5),
+  local_day = c(46, 211, 211, 211, 211, 211, 211, 211, 211, 211, 211, 211, 211,
+                211),
+  stage_mature = c(0, 0, 0, 1, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 
+                   0.5),
+  moon_illuminated = c(0.5, 0.5, 0.5, 0.5, 0, 1, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5,
+                       0.5, 0.5),
+  day_night_night = c(0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0, 1, 0.5, 0.5, 0.5, 0.5,
+                      0.5, 0.5),
   #leave NaNs to be replaced by bath_grid_trim except for temp and zoo contrasts
   adj_temp = c(rep(NaN, 8), t_range[1], t_range[2], NaN, NaN, NaN, NaN),
   adj_zoo = c(rep(NaN, 10), z_range[1], z_range[2], NaN, NaN),
@@ -477,11 +482,10 @@ pred_dat <- pred_tbl %>%
   select(-pred_grid) %>%
   unnest(cols = preds)
 
-## Show relative differences 
+
 
 # calculate differences for each contrast scenario (NOTE: estimates unaffected
 # by whether real or scaled predictions are used)
-
 moon_eff <- pred_dat %>% 
   filter(contrast == "moon light") %>% 
   select(moon_illuminated, mean_bathy:shore_dist, utm_x_m, utm_y_m, rel_pred_med) %>%
@@ -494,7 +498,6 @@ moonlight_map <- base_plot +
   geom_sf(data = coast_utm) +
   scale_fill_gradient2() +
   labs(title = "Moonlight Effects")
-
 
 sst_eff <- pred_dat %>%
   filter(contrast == "temp") %>%
@@ -633,6 +636,9 @@ pred_latent2 <- pred_latent %>%
     pred_int_width = pred_up - pred_lo
   ) 
 
+
+## TODO: move legend to inset
+
 # plot that is added to counterfac panel below
 rel_latent <- base_plot +
   geom_raster(data = pred_latent2, 
@@ -641,8 +647,11 @@ rel_latent <- base_plot +
   scale_fill_viridis_c(name = "Predicted\nBathymetric\nDepth Ratio",
                        direction = -1, 
                        option = "A") +
-  theme(legend.position = "top",
-        legend.key.size = unit(0.75, 'cm'))
+  geom_text(aes(x = -Inf, y = Inf, label = "f)"), hjust = -0.5, vjust = 1.5) +
+  theme(legend.position = c(0.15, 0.27),#"left",
+        legend.key.size = unit(0.75, 'cm'),
+        # axis.text = element_blank(),
+        legend.title = element_blank())
 
 
 # COUNTERFACTUAL PREDICT -------------------------------------------------------
@@ -776,7 +785,8 @@ bathy_cond <- counterfac_tbl %>%
   as.data.frame() %>% 
   plot_foo(data = .,
            x = "mean_bathy") +  
-  labs(x = "Mean Bottom Depth") 
+  labs(x = "Mean Bottom\nDepth") +
+  geom_text(aes(x = -Inf, y = Inf, label = "a)"), hjust = -0.5, vjust = 1.5)
 
 yday_cond <- counterfac_tbl %>% 
   filter(var_in == "local_day") %>% 
@@ -784,7 +794,9 @@ yday_cond <- counterfac_tbl %>%
   as.data.frame() %>% 
   plot_foo(data = .,
            x = "local_day") +  
-  labs(x = "Year Day") 
+  labs(x = "Year\nDay") +
+  geom_text(aes(x = -Inf, y = Inf, label = "c)"), hjust = -0.5, vjust = 1.5)
+
 
 slope_cond <- counterfac_tbl %>% 
   filter(var_in == "mean_slope") %>% 
@@ -792,19 +804,21 @@ slope_cond <- counterfac_tbl %>%
   as.data.frame() %>% 
   plot_foo(data = .,
            x = "mean_slope") +  
-  labs(x = "Mean Slope") 
+  labs(x = "Mean\nSlope") +
+  geom_text(aes(x = -Inf, y = Inf, label = "d)"), hjust = -0.5, vjust = 1.5)
 
-dist_cond <- counterfac_tbl %>% 
-  filter(var_in == "shore_dist") %>% 
-  pull(preds_ci) %>% 
-  as.data.frame() %>% 
-  plot_foo(data = .,
-           x = "shore_dist") +  
-  labs(x = "Mean Distance\nto Shore (km)") +
-  scale_x_continuous(breaks = c(15000, 35000, 55000),
-                     labels = c("15", "35", "55"),
-                     limits = c(5, 63000),
-                     expand = c(0, 0))
+
+# dist_cond <- counterfac_tbl %>% 
+#   filter(var_in == "shore_dist") %>% 
+#   pull(preds_ci) %>% 
+#   as.data.frame() %>% 
+#   plot_foo(data = .,
+#            x = "shore_dist") +  
+#   labs(x = "Mean Distance\nto Shore (km)") +
+#   scale_x_continuous(breaks = c(15000, 35000, 55000),
+#                      labels = c("15", "35", "55"),
+#                      limits = c(5, 63000),
+#                      expand = c(0, 0))
 
 
 # maturity predictions
@@ -839,6 +853,7 @@ mat_cond <- mat_preds %>%
     aes(x = stage_f, y = mean, ymin = lo, ymax = up)) +
   labs(x = "Maturity Stage +\nLength + Lipid") +
   ggsidekick::theme_sleek() +
+  geom_text(aes(x = -Inf, y = Inf, label = "d)"), hjust = -0.5, vjust = 1.5) +
   theme(
     axis.title.y = element_blank()
   ) +
@@ -877,6 +892,7 @@ dn_cond <- dn_preds %>%
     aes(x = dn_f, y = mean, ymin = lo, ymax = up)) +
   labs(x = "Diel\nCycle") +
   ggsidekick::theme_sleek() +
+  geom_text(x = -Inf, y = Inf, label = "e)", hjust = -0.5, vjust = 1.5) +
   theme(
     axis.title.y = element_blank()
   ) +
@@ -887,29 +903,38 @@ dn_cond <- dn_preds %>%
 
 
 panel1 <- cowplot::plot_grid(
-  yday_cond,
   bathy_cond,
   slope_cond,
-  dist_cond,
+  yday_cond,
+  nrow = 1
+)
+panel2 <- cowplot::plot_grid(
   mat_cond,
   dn_cond,
-  nrow = 2
+  ncol = 1
 )
-pp <- gridExtra::grid.arrange(
+panel3 <- cowplot::plot_grid(
+  panel2,
+  rel_latent,
+  ncol = 2,
+  rel_widths = c(0.75, 1.5)
+)
+pp <- cowplot::plot_grid(
+  panel1,
+  panel3,
+  nrow = 2,
+  rel_heights = c(0.5, 1)
+) 
+
+png(here::here("figs", "ms_figs_rel", "counterfac_effects.png"),
+    # height = 4.5, width = 8.5,
+    width = 5.5, height = 6.25,
+    units = "in", res = 250)
+gridExtra::grid.arrange(
   gridExtra::arrangeGrob(
-    panel1, 
+    pp,
     left = grid::textGrob("Predicted Bathymetric Depth Ratio", rot = 90)
   )
 )
-
-png(here::here("figs", "ms_figs_rel", "counterfac_effects.png"),
-    height = 4.5, width = 8.5, 
-    units = "in", res = 250)
-cowplot::plot_grid(
-  pp,
-  rel_latent,
-  ncol = 2,
-  rel_widths = c(1.5, 1)
-) 
 dev.off()
 

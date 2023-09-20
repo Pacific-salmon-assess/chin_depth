@@ -85,23 +85,24 @@ train_depth_baked <- prep(depth_recipe) %>%
          dplyr::select(-ind_block, -max_bathy))
 
 #pull model attributes from top ranger
-# rf_list <- readRDS(here::here("data", "model_fits", "rf_model_comparison.rds"))
-# top_mod <- rf_list[[2]]$top_model
-# 
-# ranger_rf <- ranger::ranger(
-#   depth ~ .,
-#   data = train_depth_baked,
-#   #hyperpars based on values from top model which is not saved on all locals
-#   num.trees = 2500,
-#   mtry = 13,
-#   keep.inbag = TRUE,
-#   quantreg = TRUE,
-#   importance = "permutation",
-#   splitrule = "extratrees"
-# )
-# 
-# saveRDS(ranger_rf,
-#         here::here("data", "model_fits", "relative_rf_ranger.rds"))
+rf_list <- readRDS(here::here("data", "model_fits", "rf_model_comparison.rds"))
+top_mod <- rf_list[[2]]$top_model
+
+ranger_rf <- ranger::ranger(
+  depth ~ .,
+  data = train_depth_baked,
+  #hyperpars based on values from top model which is not saved on all locals
+  num.trees = 1500,
+  mtry = 13,
+  # keep.inbag = TRUE for quantile predictions
+  keep.inbag = TRUE,
+  quantreg = TRUE,
+  importance = "permutation",
+  splitrule = "extratrees"
+)
+
+saveRDS(ranger_rf,
+        here::here("data", "model_fits", "relative_rf_ranger.rds"))
 
 ranger_rf <- readRDS(here::here("data", "model_fits", "relative_rf_ranger.rds"))
 
@@ -185,7 +186,7 @@ Metrics::rmse(dum_test$depth, dum_test$mean_pred)
 
 # VARIABLE IMPORTANCE ----------------------------------------------------------
 
-imp_vals <- ranger::importance(ranger_rf, type = "permutation", scale = F) 
+imp_vals <- ranger::importance(ranger_rf2, type = "permutation", scale = F) 
 
 # key for axis labels
 var_name_key <- data.frame(
@@ -332,7 +333,7 @@ rel_depth <- base_plot +
                        direction = -1, 
                        option = "A") +
   theme(legend.position = "top",
-        axis.text = element_blank()) 
+        axis.text = element_blank())
 
 mean_depth <- base_plot +
   geom_raster(data = pred_dat2 %>% filter(season == "summer"), 
@@ -340,8 +341,9 @@ mean_depth <- base_plot +
   geom_sf(data = coast_utm) +
   scale_fill_viridis_c(name = "Mean Depth (m)",
                        direction = -1) +
-  theme(legend.position = "top")
-
+  theme(legend.position = "top",
+        axis.text = element_blank()) 
+  
 var_depth <- base_plot +
   geom_raster(data = pred_dat2 %>% filter(season == "summer"), 
               aes(x = utm_x_m, y = utm_y_m, fill = pred_int_width)) +
@@ -352,15 +354,15 @@ var_depth <- base_plot +
   theme(legend.position = "top",
         axis.text = element_blank())
 
-avg_depth1 <- cowplot::plot_grid(plotlist = list(rel_depth, var_depth),
-                                 ncol = 1)
-avg_depth <- cowplot::plot_grid(plotlist = list(mean_depth, avg_depth1),
-                                ncol = 2,
-                                rel_widths = c(1.5, 1))
+avg_depth1 <- cowplot::plot_grid(plotlist = list(mean_depth, rel_depth),
+                                 ncol = 2)
+# avg_depth <- cowplot::plot_grid(plotlist = list(mean_depth, avg_depth1),
+#                                 ncol = 2,
+#                                 rel_widths = c(1.5, 1))
 
-png(here::here("figs", "ms_figs_rel", "avg_depth.png"), height = 5.5, width = 7, 
+png(here::here("figs", "ms_figs_rel", "avg_depth.png"), height = 4.5, width = 7, 
     units = "in", res = 250)
-avg_depth
+avg_depth1
 dev.off()
 
 # zoom in on JdF
@@ -566,7 +568,7 @@ base_plot +
   theme(legend.position = "top") +
   theme(
     legend.key.size = unit(0.75, 'cm'),
-    axis.text = element_text(size = 8)
+    axis.text = element_blank()#element_text(size = 8)
   )
 dev.off()
 
@@ -622,7 +624,7 @@ rel_latent <- base_plot +
   geom_text(aes(x = -Inf, y = Inf, label = "f)"), hjust = -0.5, vjust = 1.5) +
   theme(legend.position = c(0.15, 0.27),#"left",
         legend.key.size = unit(0.75, 'cm'),
-        # axis.text = element_blank(),
+        axis.text = element_blank(),
         legend.title = element_blank())
 
 
@@ -744,10 +746,12 @@ plot_foo <- function (data, ...) {
     theme(
       axis.title.y = element_blank()
     )  +
-    scale_y_continuous(breaks = c(-0.2, -0.4, -0.6),
-                       labels = c("0.2", "0.4", "0.6"),
-                       limits = c(-0.6, -0.15)
-                       )
+    scale_y_continuous(
+      breaks = c(-0.2, -0.4, -0.6),
+      labels = c("0.2", "0.4", "0.6")#,
+      # limits = c(-0.6, -0.1)
+      ) +
+    coord_cartesian(ylim = c(-0.6, -0.1))
 }
 
 
@@ -758,7 +762,8 @@ bathy_cond <- counterfac_tbl %>%
   plot_foo(data = .,
            x = "mean_bathy") +  
   labs(x = "Mean Bottom\nDepth") +
-  geom_text(aes(x = -Inf, y = Inf, label = "a)"), hjust = -0.5, vjust = 1.5)
+  geom_text(x = -Inf, y = Inf, label = "a)", hjust = -0.5, vjust = 1.5,
+            check_overlap = TRUE)
 
 yday_cond <- counterfac_tbl %>% 
   filter(var_in == "local_day") %>% 
@@ -767,7 +772,8 @@ yday_cond <- counterfac_tbl %>%
   plot_foo(data = .,
            x = "local_day") +  
   labs(x = "Year\nDay") +
-  geom_text(aes(x = -Inf, y = Inf, label = "c)"), hjust = -0.5, vjust = 1.5)
+  geom_text(x = -Inf, y = Inf, label = "c)", hjust = -0.5, vjust = 1.5,
+            check_overlap = TRUE)
 
 
 slope_cond <- counterfac_tbl %>% 
@@ -777,7 +783,8 @@ slope_cond <- counterfac_tbl %>%
   plot_foo(data = .,
            x = "mean_slope") +  
   labs(x = "Mean\nSlope") +
-  geom_text(aes(x = -Inf, y = Inf, label = "d)"), hjust = -0.5, vjust = 1.5)
+  geom_text(x = -Inf, y = Inf, label = "b)", hjust = -0.5, vjust = 1.5,
+            check_overlap = TRUE)
 
 
 # dist_cond <- counterfac_tbl %>% 
@@ -825,7 +832,8 @@ mat_cond <- mat_preds %>%
     aes(x = stage_f, y = mean, ymin = lo, ymax = up)) +
   labs(x = "Maturity Stage +\nLength + Lipid") +
   ggsidekick::theme_sleek() +
-  geom_text(aes(x = -Inf, y = Inf, label = "d)"), hjust = -0.5, vjust = 1.5) +
+  geom_text(aes(x = -Inf, y = Inf, label = "d)"), hjust = -0.5, vjust = 1.5,
+            check_overlap = TRUE) +
   theme(
     axis.title.y = element_blank()
   ) +
@@ -864,7 +872,8 @@ dn_cond <- dn_preds %>%
     aes(x = dn_f, y = mean, ymin = lo, ymax = up)) +
   labs(x = "Diel\nCycle") +
   ggsidekick::theme_sleek() +
-  geom_text(x = -Inf, y = Inf, label = "e)", hjust = -0.5, vjust = 1.5) +
+  geom_text(x = -Inf, y = Inf, label = "e)", hjust = -0.5, vjust = 1.5,
+            check_overlap = TRUE) +
   theme(
     axis.title.y = element_blank()
   ) +
@@ -899,7 +908,6 @@ pp <- cowplot::plot_grid(
 ) 
 
 png(here::here("figs", "ms_figs_rel", "counterfac_effects.png"),
-    # height = 4.5, width = 8.5,
     width = 5.5, height = 6.25,
     units = "in", res = 250)
 gridExtra::grid.arrange(

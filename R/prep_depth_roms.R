@@ -737,7 +737,7 @@ fl_box <- ggplot(
 
 
 png(here::here("figs", "ms_figs_rel", "bio_boxplot.png"),
-    height = 6, width = 6, res = 250, units = "in")
+    height = 170, width = 170, units = "mm", res = 300)
 cowplot::plot_grid(
   fl_box, lipid_box, ncol = 1
 )
@@ -769,11 +769,11 @@ bottom_dot <- ggplot(depth_dat2 %>%
     breaks = c(0, -100, -200, -300), 
     labels = seq(0, 300, by = 100)
   ) +
-  facet_wrap(~stage) +
+  facet_wrap(~stage, ncol = 1) +
   theme(legend.position = "none")
 
 png(here::here("figs", "ms_figs_rel", "depth_vs_bathy.png"),
-    height = 3, width = 5.5, res = 250, units = "in")
+    height = 150, width = 85, units = "mm", res = 300)
 bottom_dot
 dev.off()
 
@@ -1053,7 +1053,7 @@ rec_plot <-  blank_p +
   geom_sf(data = coast_utm_rec, fill = "darkgrey") +
   geom_rect(aes(xmax = max(bb_coords$X) - 25000,
                 xmin = min(bb_coords$X),
-                ymax = max(bb_coords$Y),
+                ymax = max(bb_coords$Y) - 45000,
                 ymin = min(bb_coords$Y) + 5000),
             color = "black", fill = "transparent", lty = 2) + 
   # rectangle for release locations
@@ -1111,7 +1111,7 @@ bathy_vars <- cowplot::plot_grid(
 )
 
 png(here::here("figs", "ms_figs_rel", "study_area.png"),
-    height = 5, width = 6.5, res = 250, units = "in")
+    height = 145, width = 170, units = "mm", res = 300)
 bathy_vars
 dev.off()
 

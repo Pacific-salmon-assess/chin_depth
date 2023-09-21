@@ -167,11 +167,11 @@ fit_obs <- ggplot() +
   ) +
   scale_fill_discrete(name = "") +
   ggsidekick::theme_sleek() +
-  facet_wrap(~split_group) +
+  facet_wrap(~split_group, ncol = 1) +
   theme(legend.position = "none")
 
 png(here::here("figs", "ms_figs_rel", "obs_preds_rel.png"),
-    height = 3, width = 6, units = "in", res = 200)
+    height = 190, width = 85, units = "mm", res = 300)
 fit_obs
 dev.off()
 
@@ -186,7 +186,7 @@ Metrics::rmse(dum_test$depth, dum_test$mean_pred)
 
 # VARIABLE IMPORTANCE ----------------------------------------------------------
 
-imp_vals <- ranger::importance(ranger_rf2, type = "permutation", scale = F) 
+imp_vals <- ranger::importance(ranger_rf, type = "permutation", scale = F) 
 
 # key for axis labels
 var_name_key <- data.frame(
@@ -239,7 +239,7 @@ imp_plot <- ggplot(imp_dat, aes(x = fct_reorder(var_f, - val), y = val)) +
   )
 
 png(here::here("figs", "ms_figs_rel", "importance_quantreg.png"),
-    height = 4, width = 6, units = "in", res = 250)
+    height = 100, width = 170, units = "mm", res = 300)
 imp_plot
 dev.off()
 
@@ -354,14 +354,14 @@ var_depth <- base_plot +
   theme(legend.position = "top",
         axis.text = element_blank())
 
-avg_depth1 <- cowplot::plot_grid(plotlist = list(mean_depth, rel_depth),
+avg_depth1 <- cowplot::plot_grid(plotlist = list(rel_depth, mean_depth),
                                  ncol = 2)
 # avg_depth <- cowplot::plot_grid(plotlist = list(mean_depth, avg_depth1),
 #                                 ncol = 2,
 #                                 rel_widths = c(1.5, 1))
 
-png(here::here("figs", "ms_figs_rel", "avg_depth.png"), height = 4.5, width = 7, 
-    units = "in", res = 250)
+png(here::here("figs", "ms_figs_rel", "avg_depth.png"), 
+    height = 110, width = 170, units = "mm", res = 300)
 avg_depth1
 dev.off()
 
@@ -405,85 +405,87 @@ stage_dat <- depth_dat_raw %>%
         ))
 
 # subset bath_grid to remove covariates defined in predictive tibble
-bath_grid_trim <- bath_grid %>% 
-  select(
-    -c(local_day, moon_illuminated, det_dayx, det_dayy, day_night_night)
-  ) %>% 
-  group_by(season) %>% 
-  group_nest()
+# bath_grid_trim <- bath_grid %>% 
+#   select(
+#     -c(local_day, moon_illuminated, det_dayx, det_dayy, day_night_night)
+#   ) %>% 
+#   group_by(season) %>% 
+#   group_nest()
+# 
+# depth_dat_summer <- depth_dat_raw %>% 
+#   filter(local_day > 152 & local_day < 243) 
+# t_range <- c(mean(depth_dat_summer$roms_temp) - sd(depth_dat_summer$roms_temp),
+#              mean(depth_dat_summer$roms_temp) + sd(depth_dat_summer$roms_temp))
+# z_range <- c(mean(depth_dat_summer$zoo) - sd(depth_dat_summer$zoo),
+#              mean(depth_dat_summer$zoo) + sd(depth_dat_summer$zoo))
+# o_range <- c(mean(depth_dat_summer$oxygen) - sd(depth_dat_summer$oxygen),
+#              mean(depth_dat_summer$oxygen) + sd(depth_dat_summer$oxygen))
+# 
+# # define different counterfactual contrasts
+# pred_tbl <- tibble(
+#   contrast = rep(c("season", "maturity", "moon light", 
+#                    "day night", "temp", "zoo", "oxy"), each = 2),
+#   local_day = c(46, 211, 211, 211, 211, 211, 211, 211, 211, 211, 211, 211, 211,
+#                 211),
+#   stage_mature = c(0, 0, 0, 1, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 
+#                    0.5),
+#   moon_illuminated = c(0.5, 0.5, 0.5, 0.5, 0, 1, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5,
+#                        0.5, 0.5),
+#   day_night_night = c(0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0, 1, 0.5, 0.5, 0.5, 0.5,
+#                       0.5, 0.5),
+#   #leave NaNs to be replaced by bath_grid_trim except for temp and zoo contrasts
+#   adj_temp = c(rep(NaN, 8), t_range[1], t_range[2], NaN, NaN, NaN, NaN),
+#   adj_zoo = c(rep(NaN, 10), z_range[1], z_range[2], NaN, NaN),
+#   adj_oxy = c(rep(NaN, 12), o_range[1], o_range[2])
+# ) %>% 
+#   mutate(
+#     det_dayx = sin(2 * pi * local_day / 365),
+#     det_dayy = cos(2 * pi * local_day / 365),
+#     season = fct_recode(as.factor(local_day), 
+#                         "winter" = "46", "summer" = "211"),
+#     month = factor(as.factor(local_day), labels = c("1", "7"))) %>% 
+#   left_join(., bath_grid_trim, by = "season") %>%
+#   left_join(., stage_dat, by = "stage_mature") %>% 
+#   unnest(cols = c(data)) %>% 
+#   # replace temp oxy and zoo data for those specific contrasts
+#   mutate(
+#     roms_temp = ifelse(!is.na(adj_temp), adj_temp, roms_temp),
+#     zoo = ifelse(!is.na(adj_zoo), adj_zoo, zoo),
+#     oxygen = ifelse(!is.na(adj_oxy), adj_oxy, oxygen)
+#   ) %>% 
+#   group_by(contrast, .add = TRUE) %>% 
+#   group_nest(.key = "pred_grid") %>%
+#   mutate(
+#     # generate predictions
+#     preds = purrr::map(pred_grid, function (x) {
+#       pred_rf <- predict(ranger_rf,
+#                          type = "quantiles",
+#                          quantiles = c(0.1, 0.5, 0.9),
+#                          data = x,
+#                          all = TRUE)
+#       colnames(pred_rf$predictions) <- c("lo", "med", "up")
+#       
+#       x %>%
+#         mutate(
+#           rel_pred_med = pred_rf$predictions[, "med"],
+#           rel_pred_lo = pred_rf$predictions[, "lo"],
+#           rel_pred_up = pred_rf$predictions[, "up"],
+#           pred_med = pred_rf$predictions[, "med"] * max_bathy,
+#           pred_lo = pred_rf$predictions[, "lo"] * max_bathy,
+#           pred_up = pred_rf$predictions[, "up"] * max_bathy,
+#           utm_x_m = utm_x * 1000,
+#           utm_y_m = utm_y * 1000
+#         )
+#     }
+#     )
+#     )
+# 
+# pred_dat <- pred_tbl %>% 
+#   select(-pred_grid) %>%
+#   unnest(cols = preds)
+# saveRDS(pred_dat, here::here("data", "spatial_preds.rds"))
 
-depth_dat_summer <- depth_dat_raw %>% 
-  filter(local_day > 152 & local_day < 243) 
-t_range <- c(mean(depth_dat_summer$roms_temp) - sd(depth_dat_summer$roms_temp),
-             mean(depth_dat_summer$roms_temp) + sd(depth_dat_summer$roms_temp))
-z_range <- c(mean(depth_dat_summer$zoo) - sd(depth_dat_summer$zoo),
-             mean(depth_dat_summer$zoo) + sd(depth_dat_summer$zoo))
-o_range <- c(mean(depth_dat_summer$oxygen) - sd(depth_dat_summer$oxygen),
-             mean(depth_dat_summer$oxygen) + sd(depth_dat_summer$oxygen))
-
-# define different counterfactual contrasts
-pred_tbl <- tibble(
-  contrast = rep(c("season", "maturity", "moon light", 
-                   "day night", "temp", "zoo", "oxy"), each = 2),
-  local_day = c(46, 211, 211, 211, 211, 211, 211, 211, 211, 211, 211, 211, 211,
-                211),
-  stage_mature = c(0, 0, 0, 1, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 
-                   0.5),
-  moon_illuminated = c(0.5, 0.5, 0.5, 0.5, 0, 1, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5,
-                       0.5, 0.5),
-  day_night_night = c(0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0, 1, 0.5, 0.5, 0.5, 0.5,
-                      0.5, 0.5),
-  #leave NaNs to be replaced by bath_grid_trim except for temp and zoo contrasts
-  adj_temp = c(rep(NaN, 8), t_range[1], t_range[2], NaN, NaN, NaN, NaN),
-  adj_zoo = c(rep(NaN, 10), z_range[1], z_range[2], NaN, NaN),
-  adj_oxy = c(rep(NaN, 12), o_range[1], o_range[2])
-) %>% 
-  mutate(
-    det_dayx = sin(2 * pi * local_day / 365),
-    det_dayy = cos(2 * pi * local_day / 365),
-    season = fct_recode(as.factor(local_day), 
-                        "winter" = "46", "summer" = "211"),
-    month = factor(as.factor(local_day), labels = c("1", "7"))) %>% 
-  left_join(., bath_grid_trim, by = "season") %>%
-  left_join(., stage_dat, by = "stage_mature") %>% 
-  unnest(cols = c(data)) %>% 
-  # replace temp oxy and zoo data for those specific contrasts
-  mutate(
-    roms_temp = ifelse(!is.na(adj_temp), adj_temp, roms_temp),
-    zoo = ifelse(!is.na(adj_zoo), adj_zoo, zoo),
-    oxygen = ifelse(!is.na(adj_oxy), adj_oxy, oxygen)
-  ) %>% 
-  group_by(contrast, .add = TRUE) %>% 
-  group_nest(.key = "pred_grid") %>%
-  mutate(
-    # generate predictions
-    preds = purrr::map(pred_grid, function (x) {
-      pred_rf <- predict(ranger_rf,
-                         type = "quantiles",
-                         quantiles = c(0.1, 0.5, 0.9),
-                         data = x,
-                         all = TRUE)
-      colnames(pred_rf$predictions) <- c("lo", "med", "up")
-      
-      x %>%
-        mutate(
-          rel_pred_med = pred_rf$predictions[, "med"],
-          rel_pred_lo = pred_rf$predictions[, "lo"],
-          rel_pred_up = pred_rf$predictions[, "up"],
-          pred_med = pred_rf$predictions[, "med"] * max_bathy,
-          pred_lo = pred_rf$predictions[, "lo"] * max_bathy,
-          pred_up = pred_rf$predictions[, "up"] * max_bathy,
-          utm_x_m = utm_x * 1000,
-          utm_y_m = utm_y * 1000
-        )
-    }
-    )
-    )
-
-pred_dat <- pred_tbl %>% 
-  select(-pred_grid) %>%
-  unnest(cols = preds)
-
+pred_dat <- readRDS(here::here("data", "spatial_preds.rds"))
 
 
 # calculate differences for each contrast scenario (NOTE: estimates unaffected
@@ -555,8 +557,7 @@ comb_preds <- list(
   )
 
 png(here::here("figs", "ms_figs_rel", "contrast_map.png"), 
-    height = 5.5, width = 5, 
-    units = "in", res = 250)
+    height = 140, width = 170, units = "mm", res = 300)
 base_plot +
   geom_raster(data = comb_preds, 
               aes(x = utm_x_m, y = utm_y_m, fill = rel_diff)) +
@@ -565,9 +566,9 @@ base_plot +
     name = "Bathymetric\nDepth Ratio\nDifference"
   ) +
   facet_wrap(~comp) +
-  theme(legend.position = "top") +
+  theme(legend.position = "right") +
   theme(
-    legend.key.size = unit(0.75, 'cm'),
+    legend.key.size = unit(0.5, 'cm'),
     axis.text = element_blank()#element_text(size = 8)
   )
 dev.off()
@@ -908,8 +909,7 @@ pp <- cowplot::plot_grid(
 ) 
 
 png(here::here("figs", "ms_figs_rel", "counterfac_effects.png"),
-    width = 5.5, height = 6.25,
-    units = "in", res = 250)
+    height = 190, width = 170, units = "mm", res = 300)
 gridExtra::grid.arrange(
   gridExtra::arrangeGrob(
     pp,

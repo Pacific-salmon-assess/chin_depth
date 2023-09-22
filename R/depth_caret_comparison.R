@@ -178,27 +178,27 @@ plan(multisession, workers = 7)
 
 
 # fit models (separately)
-gbm_tbl <- model_tbl %>% filter(model_type == "gbm")
-gbm_list <- future_pmap(list("gbm",
-                             gbm_tbl$recipe,
-                             gbm_tbl$train_data),
-                        .f = fit_foo,
-                        .options = furrr_options(seed = TRUE))
-names(gbm_list) <- gbm_tbl$response
-saveRDS(gbm_list,
-        here::here("data", "model_fits", "gbm_model_comparison.rds"))
+# gbm_tbl <- model_tbl %>% filter(model_type == "gbm")
+# gbm_list <- future_pmap(list("gbm",
+#                              gbm_tbl$recipe,
+#                              gbm_tbl$train_data),
+#                         .f = fit_foo,
+#                         .options = furrr_options(seed = TRUE))
+# names(gbm_list) <- gbm_tbl$response
+# saveRDS(gbm_list,
+#         here::here("data", "model_fits", "gbm_model_comparison.rds"))
 gbm_list <- readRDS(here::here("data", "model_fits", "gbm_model_comparison.rds"))
 
 
-rf_tbl <- model_tbl %>% filter(model_type == "rf")
-rf_list <- future_pmap(list("rf",
-                            rf_tbl$recipe,
-                            rf_tbl$train_data),
-                       .f = fit_foo,
-                       .options = furrr_options(seed = TRUE))
-names(rf_list) <- rf_tbl$response
-saveRDS(rf_list,
-        here::here("data", "model_fits", "rf_model_comparison.rds"))
+# rf_tbl <- model_tbl %>% filter(model_type == "rf")
+# rf_list <- future_pmap(list("rf",
+#                             rf_tbl$recipe,
+#                             rf_tbl$train_data),
+#                        .f = fit_foo,
+#                        .options = furrr_options(seed = TRUE))
+# names(rf_list) <- rf_tbl$response
+# saveRDS(rf_list,
+#         here::here("data", "model_fits", "rf_model_comparison.rds"))
 rf_list <- readRDS(here::here("data", "model_fits", "rf_model_comparison.rds"))
 
 

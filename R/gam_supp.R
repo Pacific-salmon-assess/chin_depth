@@ -23,6 +23,30 @@ depth_dat_raw1 <- readRDS(
   ) 
 
 
+det_rates <- depth_dat_raw1 %>% 
+  group_by(vemco_code) %>% 
+  summarize(
+    n_dets = n(),
+    n_days = length(unique(local_day)),
+    n_rec = length(unique(receiver_name))
+  ) %>% 
+  mutate(
+    n_det_bin = cut(n_dets, breaks = c(0, 10, 100, 1000, 10000)),
+    n_day_bin = cut(n_days, breaks = c(0, 10, 30, 100, 500)),
+    n_rec_bin = cut(n_rec, breaks = c(0, 5, 20, 50, 100))
+  )
+
+det_rates %>% 
+  group_by(n_det_bin) %>% 
+  tally()
+det_rates %>% 
+  group_by(n_day_bin) %>% 
+  tally()
+det_rates %>% 
+  group_by(n_rec_bin) %>% 
+  tally()
+
+
 # remove 2022 tag releases (~6k dets) for training model
 depth_dat_raw <- depth_dat_raw1 %>% 
   filter(!grepl("2022", vemco_code))
@@ -57,8 +81,8 @@ depth_dat <- depth_dat_raw %>%
 train_depth <- depth_dat %>% filter(!ind_block == "5") %>% droplevels()
 test_depth <- depth_dat %>% filter(ind_block == "5") %>% droplevels()
 test_depth_22 <- depth_dat_raw1 %>% 
-  group_by(vemco_code, date_time_hour, fl, lipid, stage_dummy, utm_x, utm_y, day_night_dummy,
-           local_day, mean_bathy, mean_slope, shore_dist,
+  group_by(vemco_code, date_time_hour, fl, lipid, stage_dummy, utm_x, utm_y, 
+           day_night_dummy, local_day, mean_bathy, mean_slope, shore_dist,
            u, v, w, roms_temp, zoo, oxygen, thermo_depth) %>% 
   summarize(
     moon_illuminated = mean(moon_illuminated),
@@ -67,6 +91,11 @@ test_depth_22 <- depth_dat_raw1 %>%
     .groups = "drop"
   ) %>% 
   ungroup()
+
+
+## SUBHOURLY VARIATION ---------------------------------------------------------
+
+hist(depth_dat$sd_rel_depth)
 
 
 ## FIT -------------------------------------------------------------------------
@@ -83,7 +112,31 @@ fit1 <- gam(
   family = betar(link = "logit")
 )
 
-plot(fit1)
+fit2 <- gam(
+  mean_rel_depth ~ te(utm_x, utm_y, bs=c("tp", "tp"), k = c(10, 10)) +
+    s(mean_bathy, k = 3) + s(mean_slope, k = 3) + 
+    s(local_day, bs = "cc", k = 5) + 
+    day_night_dummy + stage_dummy +
+    fl + lipid + zoo + shore_dist + moon_illuminated + 
+    s(vemco_code, bs = "re"),
+  data = train_depth,
+  knots = list(local_day = c(0, 365)),
+  family = betar(link = "logit")
+)
+
+fit3 <- gam(
+  mean_rel_depth ~ te(utm_x, utm_y, bs=c("tp", "tp"), k=c(10, 10)) +
+    s(mean_bathy, k = 3) + 
+    s(local_day, bs = "cc", k = 5) + 
+    day_night_dummy + stage_dummy +# fl + lipid +
+    s(vemco_code, bs = "re"),
+  data = train_depth %>% filter(!vemco_code == "7708_2019"),
+  knots = list(local_day = c(0, 365)),
+  family = betar(link = "logit")
+)
+
+concurvity(fit1)
+concurvity(fit2)
 
 
 ## CHECK RESIDUALS -------------------------------------------------------------
@@ -114,6 +167,28 @@ ggplot(train_depth %>%
   geom_point(aes(x = local_day, y = resid)) +
   facet_wrap(~vemco_code, scales = "free") +
   ggsidekick::theme_sleek()
+
+
+#
+sims_list <- purrr::map(
+  fit_list, 
+  ~ simulate(.x, newdata = train_depth, nsim = 50)
+)
+fixed_pred_list <- purrr::map(
+  fit_list, 
+  ~ predict(.x, type = "response")
+)
+qq_list <- purrr::pmap(
+  list(sims_list, fixed_pred_list), 
+  function(y, z) {
+    dharma_res <- DHARMa::createDHARMa(
+      simulatedResponse = y,
+      observedResponse = train_depth$mean_rel_depth,
+      fittedPredictedResponse = z
+    )
+    plot(dharma_res)
+  }
+)
 
 
 # SPATIAL PREDICT --------------------------------------------------------------
@@ -287,9 +362,9 @@ gen_pred_dat <- function(var_in) {
 
 
 # predictions function
-pred_foo <- function(preds_in, ...) {
+pred_foo <- function(fit, preds_in, ...) {
   preds1 <- predict(
-    fit1, 
+    object = fit, 
     newdata = preds_in,
     type = "response",
     se.fit = TRUE,
@@ -316,8 +391,9 @@ counterfac_tbl <- tibble(
   mutate(
     pred_dat_in = purrr::map(var_in,
                              gen_pred_dat),
-    preds_ci = purrr::map(pred_dat_in,
-                          pred_foo)
+    preds_ci1 = purrr::map(pred_dat_in, ~ pred_foo(fit = fit1, preds_in = .x)),
+    preds_ci2 = purrr::map(pred_dat_in, ~ pred_foo(fit = fit2, preds_in = .x)),
+    preds_ci3 = purrr::map(pred_dat_in, ~ pred_foo(fit = fit3, preds_in = .x))
   )
 
 
@@ -339,9 +415,10 @@ plot_foo <- function (data, ...) {
 }
 
 
+
 bathy_cond <- counterfac_tbl %>% 
   filter(var_in == "mean_bathy") %>% 
-  pull(preds_ci) %>% 
+  pull(preds_ci3) %>% 
   as.data.frame() %>% 
   plot_foo(data = .,
            x = "mean_bathy") +  

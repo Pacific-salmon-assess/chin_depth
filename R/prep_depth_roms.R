@@ -52,25 +52,59 @@ rec %>%
          mean_depth)
 
 # life stage estimates
-chin_in <- readRDS(here::here("data", "acousticOnly_GSI.RDS"))
 stage_dat <- readRDS(here::here("data", "agg_lifestage_df.RDS")) %>% 
-  left_join(., 
-            chin_in %>% dplyr::select(fish, acoustic_type, lipid,  cu_name), 
-            by = "fish") %>% 
-  filter(!is.na(vemco_code)) %>% 
-  select(vemco_code, acoustic_type, fl, stage_predicted, lipid, cu_name, agg)  
+  dplyr::select(fish, stage, agg) 
+chin_in <- readRDS(here::here("data", "acousticOnly_GSI.RDS")) %>% 
+  left_join(., stage_dat, by = "fish") 
 
-stage_dat %>% group_by(stage_predicted) %>% tally()
+## predict life stage based on fitted model 
+stage_mod <- readRDS(here::here("data", "stage_fl_hierA.RDS"))
+# include RIs when stock ID is known
+pred_dat <- tidybayes::add_epred_draws(
+  object = stage_mod,
+  newdata = chin_in %>% 
+    filter(is.na(stage) | stage == "unknown",
+           !is.na(agg)),
+  re_formula = NULL, #scale = "response", 
+  ndraws = 100
+)
+
+# otherwise marginalize RIs
+pred_dat_na <- tidybayes::add_epred_draws(
+  object = stage_mod,
+  newdata = chin_in %>% 
+    filter(is.na(stage) | stage == "unknown",
+           is.na(agg)),
+  re_formula = NA, #scale = "response", 
+  ndraws = 100
+)
+
+pred_stage <- rbind(pred_dat, pred_dat_na) %>% 
+  group_by(fish) %>% 
+  summarize(med = median(.epred), 
+            lo = quantile(.epred, prob = 0.05),
+            up = quantile(.epred, prob = 0.95),
+            .groups = "drop") 
+
+chin_stage <- left_join(chin_in, pred_stage, by = "fish") %>% 
+  mutate(med_stage = case_when(
+    stage == "mature" ~ 1,
+    stage == "immature" ~ 0,
+    TRUE ~ med
+  )) %>% 
+  filter(!is.na(acoustic_year)) %>%
+  select(acoustic_year, acoustic_type, fl, med_stage, lipid, cu_name, agg)
 
 
 # ~2% of tags lack energy density estimates, impute
-interp_stage_dat <- VIM::kNN(stage_dat, k = 5) %>% 
+interp_stage_dat <- VIM::kNN(chin_stage, k = 5) %>% 
   select(-ends_with("imp")) 
 
 
 # moderately cleaned detections data (includes depth/temperature sensors)
 depth_raw <- readRDS(here::here("data", "detections_all.RDS")) %>%
-  left_join(., interp_stage_dat %>% dplyr::rename(stage = stage_predicted), 
+  glimpse()
+  left_join(., interp_stage_dat, 
             by = "vemco_code") %>% 
   left_join(., 
             rec %>% 
@@ -81,7 +115,7 @@ depth_raw <- readRDS(here::here("data", "detections_all.RDS")) %>%
     !station_name == "LakeWashington",
     grepl("V13P", acoustic_type)
   ) %>%
-  select(vemco_code, stage, fl, lipid, cu_name, agg, date_time, latitude, 
+  select(vemco_code, med_stage, fl, lipid, cu_name, agg, date_time, latitude, 
          longitude, receiver_name = receiver, trim_sn, region, 
          mean_bathy = mean_depth, max_bathy = max_depth, mean_slope, mean_aspect,
          shore_dist, depth)

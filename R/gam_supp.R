@@ -179,11 +179,14 @@ pred_dat1 <- bath_grid %>%
     vemco_code = unique(depth_dat_raw$vemco_code)[1]
   ) 
 
-pred_fit <- predict(fit1, type = "response", se.fit = TRUE, newdata = pred_dat1)
+pred_fit <- predict(fit1, type = "response", se.fit = TRUE, newdata = pred_dat1,
+                    #estimate population level, excluding RIs for tag
+                    exclude = "s(vemco_code)")
 
 pred_dat2 <- pred_dat1 %>%
   mutate(
     rel_pred_med = pred_fit$fit,
+    rel_pred_se = pred_fit$se.fit,
     rel_pred_lo = rel_pred_med + (qnorm(0.025) * pred_fit$se.fit),
     rel_pred_up = rel_pred_med + (qnorm(0.975) * pred_fit$se.fit),
     pred_med = rel_pred_med * max_bathy,
@@ -216,9 +219,9 @@ mean_depth <- base_plot +
 
 var_depth <- base_plot +
   geom_raster(data = pred_dat2 %>% filter(season == "summer"), 
-              aes(x = utm_x_m, y = utm_y_m, fill = pred_int_width)) +
+              aes(x = utm_x_m, y = utm_y_m, fill = rel_pred_se)) +
   geom_sf(data = coast_utm) +
-  scale_fill_viridis_c(name = "80% Prediction\nInt. Width (m)", 
+  scale_fill_viridis_c(name = "Std. Error of Predictions", 
                        option = "C",
                        direction = -1)  +
   theme(legend.position = "top",
@@ -232,25 +235,30 @@ avg_depth1 <- cowplot::plot_grid(plotlist = list(rel_depth, mean_depth),
 
 
 new_dat <- data.frame(
-  utm_x = median(train_depth_baked$utm_x),
-  utm_y = median(train_depth_baked$utm_y),
-  fl = median(train_depth_baked$fl),
-  lipid = median(train_depth_baked$lipid),
-  mean_bathy = median(train_depth_baked$mean_bathy),
-  local_day = median(depth_dat_raw$local_day),
-  mean_slope = median(train_depth_baked$mean_slope),
-  shore_dist = median(train_depth_baked$shore_dist),
-  u = median(train_depth_baked$u),
-  v = median(train_depth_baked$v),
-  w = median(train_depth_baked$w),
-  zoo = median(train_depth_baked$zoo),
-  oxygen = median(train_depth_baked$oxygen),
-  thermo_depth = median(train_depth_baked$thermo_depth),
-  roms_temp = median(train_depth_baked$roms_temp),
-  moon_illuminated = median(train_depth_baked$moon_illuminated),
-  day_night_night = 0.5,
-  stage_mature = 0.5
+  utm_x = median(train_depth$utm_x),
+  utm_y = median(train_depth$utm_y),
+  fl = median(train_depth$fl),
+  lipid = median(train_depth$lipid),
+  mean_bathy = median(train_depth$mean_bathy),
+  local_day = median(train_depth$local_day),
+  mean_slope = median(train_depth$mean_slope),
+  shore_dist = median(train_depth$shore_dist),
+  u = median(train_depth$u),
+  v = median(train_depth$v),
+  w = median(train_depth$w),
+  zoo = median(train_depth$zoo),
+  oxygen = median(train_depth$oxygen),
+  thermo_depth = median(train_depth$thermo_depth),
+  roms_temp = median(train_depth$roms_temp),
+  moon_illuminated = median(train_depth$moon_illuminated),
+  day_night_dummy = 0.5,
+  stage_dummy = 0.5,
+  vemco_code = unique(depth_dat_raw$vemco_code)[1]
 ) %>% 
+  mutate(
+    utm_x_m = utm_x * 1000,
+    utm_y_m = utm_y * 1000
+  ) %>% 
   #duplicate 100 times
   as_tibble() %>% 
   slice(rep(1:n(), each = 100))
@@ -260,7 +268,7 @@ new_dat <- data.frame(
 gen_pred_dat <- function(var_in) {
   # necessary to deal with string input
   varname <- ensym(var_in)
-  group_vals <- depth_dat_raw %>% 
+  group_vals <- depth_dat %>% 
     dplyr::summarize(min_v = min(!!varname),
                      max_v = max(!!varname))
   # change to dataframe
@@ -270,67 +278,215 @@ gen_pred_dat <- function(var_in) {
                  seq(group_vals$min_v[i], group_vals$max_v[i], 
                      length.out = 100))
   }
-  # var_seq2 <- rep(var_seq, times = length(unique(new_dat$site)))
   var_seq2 <- var_seq
   new_dat %>% 
     select(- {{ var_in }}) %>% 
     mutate(dum = var_seq2) %>% 
-    dplyr::rename(!!varname := dum) %>% 
-    mutate(
-      det_dayx = sin(2 * pi * local_day / 365),
-      det_dayy = cos(2 * pi * local_day / 365)
-    )
+    dplyr::rename(!!varname := dum) 
 }
 
 
 # predictions function
 pred_foo <- function(preds_in, ...) {
   preds1 <- predict(
-    ranger_rf, 
-    data = preds_in,
+    fit1, 
+    newdata = preds_in,
+    type = "response",
+    se.fit = TRUE,
+    exclude = "s(vemco_code)",
     ...
   )
   
-  if (is.null(preds1$se)) {
-    preds_out <- preds1$predictions
-    colnames(preds_out) <- c("lo", "med", "up")
-    dum <- cbind(preds_in, preds_out) %>% 
-      mutate(med = -1 * med)
-  }
-  if (!is.null(preds1$se)) {
-    preds_out <- cbind(
-      preds1$predictions,
-      preds1$se
-    ) 
-    colnames(preds_out) <- c("mean", "se")
-    dum <- cbind(preds_in, preds_out) %>%
-      mutate(
-        lo = mean + (qnorm(0.025) * se),
-        up = mean + (qnorm(0.975) * se), 
-        mean = -1 * mean
-      )
-  }
-  
-  dum %>%
+  preds_in %>%
     mutate(
-      lo = -1 * lo, 
-      up = -1 * up
-    )
+      mean = as.numeric(preds1$fit),
+      se = as.numeric(preds1$se.fit),
+      lo = -1 * (mean + (qnorm(0.025) * se)),
+      up = -1 * (mean + (qnorm(0.975) * se)),
+      mean = -1 * mean
+    ) 
 }
 
-# counterfac_tbl <- tibble(
-#   var_in = c("mean_bathy", "fl", "utm_x", "utm_y",
-#              "local_day", "lipid", "thermo_depth",
-#              "roms_temp", "zoo", "oxygen", "shore_dist",
-#              "moon_illuminated", "mean_slope"
-#   )) %>%
-#   mutate(
-#     pred_dat_in = purrr::map(var_in,
-#                              gen_pred_dat),
-#     preds_ci = purrr::map(pred_dat_in,
-#                           pred_foo,
-#                           type = "se",
-#                           se.method = "infjack")
-#   )
-# saveRDS(counterfac_tbl,
-#         here::here("data", "counterfac_preds_ci.rds"))
+counterfac_tbl <- tibble(
+  var_in = c("mean_bathy", "fl", "utm_x", "utm_y",
+             "local_day", #"lipid", "thermo_depth",
+             #"roms_temp", 
+             "day_night_dummy", "stage_dummy"
+  )) %>%
+  mutate(
+    pred_dat_in = purrr::map(var_in,
+                             gen_pred_dat),
+    preds_ci = purrr::map(pred_dat_in,
+                          pred_foo)
+  )
+
+
+plot_foo <- function (data, ...) {
+  ggplot(data, mapping = aes(!!!ensyms(...))) +
+    geom_line(aes(y = mean)) +
+    geom_ribbon(aes(ymin = lo, ymax = up), alpha = 0.4) +
+    ggsidekick::theme_sleek() +
+    scale_x_continuous(expand = c(0, 0))+
+    theme(
+      axis.title.y = element_blank()
+    )  +
+    scale_y_continuous(
+      breaks = c(-0.2, -0.4, -0.6),
+      labels = c("0.2", "0.4", "0.6")#,
+      # limits = c(-0.6, -0.1)
+    ) +
+    coord_cartesian(ylim = c(-0.6, -0.1))
+}
+
+
+bathy_cond <- counterfac_tbl %>% 
+  filter(var_in == "mean_bathy") %>% 
+  pull(preds_ci) %>% 
+  as.data.frame() %>% 
+  plot_foo(data = .,
+           x = "mean_bathy") +  
+  labs(x = "Mean Bottom\nDepth") +
+  geom_text(x = -Inf, y = Inf, label = "a)", hjust = -0.5, vjust = 1.5,
+            check_overlap = TRUE)
+
+yday_cond <- counterfac_tbl %>% 
+  filter(var_in == "local_day") %>% 
+  pull(preds_ci) %>% 
+  as.data.frame() %>% 
+  plot_foo(data = .,
+           x = "local_day") +  
+  labs(x = "Year\nDay") +
+  geom_text(x = -Inf, y = Inf, label = "c)", hjust = -0.5, vjust = 1.5,
+            check_overlap = TRUE)
+
+
+slope_cond <- counterfac_tbl %>% 
+  filter(var_in == "mean_slope") %>% 
+  pull(preds_ci) %>% 
+  as.data.frame() %>% 
+  plot_foo(data = .,
+           x = "mean_slope") +  
+  labs(x = "Mean\nSlope") +
+  geom_text(x = -Inf, y = Inf, label = "b)", hjust = -0.5, vjust = 1.5,
+            check_overlap = TRUE)
+
+
+# dist_cond <- counterfac_tbl %>% 
+#   filter(var_in == "shore_dist") %>% 
+#   pull(preds_ci) %>% 
+#   as.data.frame() %>% 
+#   plot_foo(data = .,
+#            x = "shore_dist") +  
+#   labs(x = "Mean Distance\nto Shore (km)") +
+#   scale_x_continuous(breaks = c(15000, 35000, 55000),
+#                      labels = c("15", "35", "55"),
+#                      limits = c(5, 63000),
+#                      expand = c(0, 0))
+
+
+# maturity predictions
+mat_pred_in <- rbind(
+  new_dat %>% 
+    mutate(
+      stage_mature = 0
+    ),
+  new_dat %>% 
+    mutate(
+      stage_mature = 1
+    )
+) %>%
+  # replace size and lipid with stage-specific averages
+  select(-fl, -lipid) %>% 
+  left_join(., stage_dat, by = "stage_mature") %>% 
+  mutate(
+    det_dayx = sin(2 * pi * local_day / 365),
+    det_dayy = cos(2 * pi * local_day / 365)
+  )
+mat_preds <- pred_foo(mat_pred_in, type = "se", se.method = "infjack")
+
+mat_cond <- mat_preds %>% 
+  mutate(
+    lo = mean + (qnorm(0.025) * se),
+    up = mean + (qnorm(0.975) * se),
+    stage_f = factor(stage_mature, levels = c(0, 1), 
+                     labels = c("immature", "mature"))
+  ) %>% 
+  ggplot(.) +
+  geom_pointrange(
+    aes(x = stage_f, y = mean, ymin = lo, ymax = up)) +
+  labs(x = "Maturity Stage +\nLength + Lipid") +
+  ggsidekick::theme_sleek() +
+  geom_text(aes(x = -Inf, y = Inf, label = "d)"), hjust = -0.5, vjust = 1.5,
+            check_overlap = TRUE) +
+  theme(
+    axis.title.y = element_blank()
+  ) +
+  scale_y_continuous(breaks = c(-0.2, -0.4, -0.6),
+                     labels = c("0.2", "0.4", "0.6"),
+                     limits = c(-0.6, -0.15)
+  )
+
+
+# day-night predictions
+dn_pred_in <- rbind(
+  new_dat %>% 
+    mutate(
+      day_night_night = 0
+    ),
+  new_dat %>% 
+    mutate(
+      day_night_night = 1
+    )
+) %>%
+  mutate(
+    det_dayx = sin(2 * pi * local_day / 365),
+    det_dayy = cos(2 * pi * local_day / 365)
+  )
+dn_preds <- pred_foo(dn_pred_in, type = "se", se.method = "infjack")
+
+dn_cond <- dn_preds %>% 
+  mutate(
+    lo = mean + (qnorm(0.025) * se),
+    up = mean + (qnorm(0.975) * se),
+    dn_f = factor(day_night_night, levels = c(0, 1), 
+                  labels = c("day", "night"))
+  ) %>% 
+  ggplot(.) +
+  geom_pointrange(
+    aes(x = dn_f, y = mean, ymin = lo, ymax = up)) +
+  labs(x = "Diel\nCycle") +
+  ggsidekick::theme_sleek() +
+  geom_text(x = -Inf, y = Inf, label = "e)", hjust = -0.5, vjust = 1.5,
+            check_overlap = TRUE) +
+  theme(
+    axis.title.y = element_blank()
+  ) +
+  scale_y_continuous(breaks = c(-0.2, -0.4, -0.6),
+                     labels = c("0.2", "0.4", "0.6"),
+                     limits = c(-0.6, -0.15)
+  )
+
+
+panel1 <- cowplot::plot_grid(
+  bathy_cond,
+  slope_cond,
+  yday_cond,
+  nrow = 1
+)
+panel2 <- cowplot::plot_grid(
+  mat_cond,
+  dn_cond,
+  ncol = 1
+)
+panel3 <- cowplot::plot_grid(
+  panel2,
+  rel_latent,
+  ncol = 2,
+  rel_widths = c(0.75, 1.5)
+)
+pp <- cowplot::plot_grid(
+  panel1,
+  panel3,
+  nrow = 2,
+  rel_heights = c(0.5, 1)
+) 

@@ -40,7 +40,24 @@ ind_folds <- data.frame(
 
 
 depth_dat <- depth_dat_raw %>% 
-  group_by(vemco_code, fl, lipid, stage_dummy, utm_x, utm_y, day_night_dummy,
+  group_by(vemco_code, date_time_hour, fl, lipid, stage_dummy, utm_x, utm_y,
+           day_night_dummy, local_day, mean_bathy, mean_slope, shore_dist,
+           u, v, w, roms_temp, zoo, oxygen, thermo_depth) %>% 
+  summarize(
+    moon_illuminated = mean(moon_illuminated),
+    mean_rel_depth = mean(rel_depth),
+    sd_rel_depth = sd(rel_depth),
+    .groups = "drop"
+  ) %>% 
+  left_join(., ind_folds, by = "vemco_code") %>% 
+  ungroup()
+
+
+# split by individual blocking (identical to random forest)
+train_depth <- depth_dat %>% filter(!ind_block == "5") %>% droplevels()
+test_depth <- depth_dat %>% filter(ind_block == "5") %>% droplevels()
+test_depth_22 <- depth_dat_raw1 %>% 
+  group_by(vemco_code, date_time_hour, fl, lipid, stage_dummy, utm_x, utm_y, day_night_dummy,
            local_day, mean_bathy, mean_slope, shore_dist,
            u, v, w, roms_temp, zoo, oxygen, thermo_depth) %>% 
   summarize(
@@ -49,22 +66,7 @@ depth_dat <- depth_dat_raw %>%
     sd_rel_depth = sd(rel_depth),
     .groups = "drop"
   ) %>% 
-  left_join(., ind_folds, by = "vemco_code")
-
-
-# split by individual blocking (identical to random forest)
-train_depth <- depth_dat %>% filter(!ind_block == "5") %>% droplevels()
-test_depth <- depth_dat %>% filter(ind_block == "5") %>% droplevels()
-test_depth_22 <- depth_dat_raw1 %>% 
-  group_by(vemco_code, fl, lipid, stage_dummy, utm_x, utm_y, day_night_dummy,
-           local_day, mean_bathy, mean_slope, shore_dist,
-           u, v, w, roms_temp, zoo, oxygen, thermo_depth) %>% 
-  summarize(
-    moon_illuminated = mean(moon_illuminated),
-    mean_rel_depth = mean(rel_depth),
-    sd_rel_depth = sd(rel_depth),
-    .groups = "drop"
-  ) 
+  ungroup()
 
 
 ## FIT -------------------------------------------------------------------------
@@ -83,6 +85,35 @@ fit1 <- gam(
 
 plot(fit1)
 
+
+## CHECK RESIDUALS -------------------------------------------------------------
+
+resids <- resid(fit1)
+
+# normal distributed
+hist(resids)
+
+# qqplots
+gam.check(fit1)
+
+# temporal autocorrelation
+acf(resids)
+
+train_depth$resid <- resids
+
+# look at 9 tags w/ most detections and plot temporal patterns in residuals
+tt <- train_depth %>% 
+  group_by(vemco_code) %>% 
+  mutate(nn = n()) %>% 
+  arrange(-nn) %>% 
+  pull(vemco_code) %>% 
+  unique()
+
+ggplot(train_depth %>% 
+         filter(vemco_code %in% tt[1:9])) + 
+  geom_point(aes(x = local_day, y = resid)) +
+  facet_wrap(~vemco_code, scales = "free") +
+  ggsidekick::theme_sleek()
 
 
 # SPATIAL PREDICT --------------------------------------------------------------
@@ -149,19 +180,18 @@ pred_dat1 <- bath_grid %>%
   ) 
 
 pred_fit <- predict(fit1, type = "response", se.fit = TRUE, newdata = pred_dat1)
-colnames(pred_fit$predictions) <- c("lo", "med", "up")
 
 pred_dat2 <- pred_dat1 %>%
   mutate(
     rel_pred_med = pred_fit$fit,
-    # rel_pred_lo = pred_fit$predictions[, "lo"],
-    # rel_pred_up = pred_fit$predictions[, "up"],
-    # pred_med = pred_fit$predictions[, "med"] * max_bathy,
-    # pred_lo = pred_fit$predictions[, "lo"] * max_bathy,
-    # pred_up = pred_fit$predictions[, "up"] * max_bathy,
+    rel_pred_lo = rel_pred_med + (qnorm(0.025) * pred_fit$se.fit),
+    rel_pred_up = rel_pred_med + (qnorm(0.975) * pred_fit$se.fit),
+    pred_med = rel_pred_med * max_bathy,
+    pred_lo = rel_pred_lo * max_bathy,
+    pred_up = rel_pred_up * max_bathy,
     utm_x_m = utm_x * 1000,
-    utm_y_m = utm_y * 1000#,
-    # pred_int_width = pred_up - pred_lo
+    utm_y_m = utm_y * 1000,
+    pred_int_width = pred_up - pred_lo
   ) 
 
 
@@ -196,3 +226,111 @@ var_depth <- base_plot +
 
 avg_depth1 <- cowplot::plot_grid(plotlist = list(rel_depth, mean_depth),
                                  ncol = 2)
+
+
+## CONDITIONAL PREDICTIONS -----------------------------------------------------
+
+
+new_dat <- data.frame(
+  utm_x = median(train_depth_baked$utm_x),
+  utm_y = median(train_depth_baked$utm_y),
+  fl = median(train_depth_baked$fl),
+  lipid = median(train_depth_baked$lipid),
+  mean_bathy = median(train_depth_baked$mean_bathy),
+  local_day = median(depth_dat_raw$local_day),
+  mean_slope = median(train_depth_baked$mean_slope),
+  shore_dist = median(train_depth_baked$shore_dist),
+  u = median(train_depth_baked$u),
+  v = median(train_depth_baked$v),
+  w = median(train_depth_baked$w),
+  zoo = median(train_depth_baked$zoo),
+  oxygen = median(train_depth_baked$oxygen),
+  thermo_depth = median(train_depth_baked$thermo_depth),
+  roms_temp = median(train_depth_baked$roms_temp),
+  moon_illuminated = median(train_depth_baked$moon_illuminated),
+  day_night_night = 0.5,
+  stage_mature = 0.5
+) %>% 
+  #duplicate 100 times
+  as_tibble() %>% 
+  slice(rep(1:n(), each = 100))
+
+
+# make tibble for different counterfacs
+gen_pred_dat <- function(var_in) {
+  # necessary to deal with string input
+  varname <- ensym(var_in)
+  group_vals <- depth_dat_raw %>% 
+    dplyr::summarize(min_v = min(!!varname),
+                     max_v = max(!!varname))
+  # change to dataframe
+  var_seq <- NULL
+  for (i in 1:nrow(group_vals)) {
+    var_seq <- c(var_seq, 
+                 seq(group_vals$min_v[i], group_vals$max_v[i], 
+                     length.out = 100))
+  }
+  # var_seq2 <- rep(var_seq, times = length(unique(new_dat$site)))
+  var_seq2 <- var_seq
+  new_dat %>% 
+    select(- {{ var_in }}) %>% 
+    mutate(dum = var_seq2) %>% 
+    dplyr::rename(!!varname := dum) %>% 
+    mutate(
+      det_dayx = sin(2 * pi * local_day / 365),
+      det_dayy = cos(2 * pi * local_day / 365)
+    )
+}
+
+
+# predictions function
+pred_foo <- function(preds_in, ...) {
+  preds1 <- predict(
+    ranger_rf, 
+    data = preds_in,
+    ...
+  )
+  
+  if (is.null(preds1$se)) {
+    preds_out <- preds1$predictions
+    colnames(preds_out) <- c("lo", "med", "up")
+    dum <- cbind(preds_in, preds_out) %>% 
+      mutate(med = -1 * med)
+  }
+  if (!is.null(preds1$se)) {
+    preds_out <- cbind(
+      preds1$predictions,
+      preds1$se
+    ) 
+    colnames(preds_out) <- c("mean", "se")
+    dum <- cbind(preds_in, preds_out) %>%
+      mutate(
+        lo = mean + (qnorm(0.025) * se),
+        up = mean + (qnorm(0.975) * se), 
+        mean = -1 * mean
+      )
+  }
+  
+  dum %>%
+    mutate(
+      lo = -1 * lo, 
+      up = -1 * up
+    )
+}
+
+# counterfac_tbl <- tibble(
+#   var_in = c("mean_bathy", "fl", "utm_x", "utm_y",
+#              "local_day", "lipid", "thermo_depth",
+#              "roms_temp", "zoo", "oxygen", "shore_dist",
+#              "moon_illuminated", "mean_slope"
+#   )) %>%
+#   mutate(
+#     pred_dat_in = purrr::map(var_in,
+#                              gen_pred_dat),
+#     preds_ci = purrr::map(pred_dat_in,
+#                           pred_foo,
+#                           type = "se",
+#                           se.method = "infjack")
+#   )
+# saveRDS(counterfac_tbl,
+#         here::here("data", "counterfac_preds_ci.rds"))

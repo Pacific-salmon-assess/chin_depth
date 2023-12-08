@@ -46,7 +46,7 @@ ind_folds <- data.frame(
 depth_dat <- depth_dat_raw %>% 
   left_join(., ind_folds, by = "vemco_code") %>% 
   dplyr::select(
-    depth = rel_depth, fl, lipid, stage, utm_x, utm_y, day_night,
+    depth = rel_depth, fl, lipid, med_stage, utm_x, utm_y, day_night,
     det_dayx, det_dayy,
     max_bathy, mean_bathy, mean_slope, shore_dist,
     u, v, w, roms_temp, zoo, oxygen, thermo_depth, moon_illuminated,
@@ -59,7 +59,7 @@ test_depth <- depth_dat %>% filter(ind_block == "5") %>% droplevels()
 test_depth_22 <- depth_dat_raw1 %>% 
   filter(grepl("2022", vemco_code)) %>% 
   dplyr::select(
-    depth = rel_depth, fl, lipid, stage, utm_x, utm_y, day_night,
+    depth = rel_depth, fl, lipid, med_stage, utm_x, utm_y, day_night,
     det_dayx, det_dayy,
     max_bathy, mean_bathy, mean_slope, shore_dist,
     u, v, w, roms_temp, zoo, oxygen, thermo_depth, moon_illuminated)
@@ -71,8 +71,10 @@ depth_recipe <- recipe(depth ~ .,
   step_dummy(all_predictors(), -all_numeric())
 
 
-train_folds <- caret::groupKFold(train_depth$ind_block,
-                          k = length(unique(train_depth$ind_block)))
+train_folds <- caret::groupKFold(
+  train_depth$ind_block,
+  k = length(unique(train_depth$ind_block))
+)
 depth_ctrl <-   caret::trainControl(
   method="repeatedcv",
   index = train_folds
@@ -85,8 +87,8 @@ train_depth_baked <- prep(depth_recipe) %>%
          dplyr::select(-ind_block, -max_bathy))
 
 #pull model attributes from top ranger
-rf_list <- readRDS(here::here("data", "model_fits", "rf_model_comparison.rds"))
-top_mod <- rf_list[[2]]$top_model
+# rf_list <- readRDS(here::here("data", "model_fits", "rf_model_comparison.rds"))
+# top_mod <- rf_list[[2]]$top_model
 
 ranger_rf <- ranger::ranger(
   depth ~ .,
@@ -102,24 +104,25 @@ ranger_rf <- ranger::ranger(
 )
 
 saveRDS(ranger_rf,
-        here::here("data", "model_fits", "relative_rf_ranger.rds"))
+        here::here("data", "model_fits", "relative_rf_ranger_resubmit.rds"))
 
-ranger_rf <- readRDS(here::here("data", "model_fits", "relative_rf_ranger.rds"))
+ranger_rf <- readRDS(here::here("data", "model_fits", "relative_rf_ranger_resubmit.rds"))
 
 
 # CHECK PREDS ------------------------------------------------------------------
 
 obs_preds <- predict(ranger_rf,
-                     data = train_depth_baked)
+                     data = train_depth_baked,
+                     type = "quantiles",
+                     quantiles = c(0.05, 0.5, 0.95))
 
 dum <- train_depth %>% 
-  mutate(mean_pred = obs_preds$predictions,
+  mutate(mean_pred = obs_preds$predictions[ , 2],
          mean_pred_real = mean_pred * max_bathy,
+         lo_pred_real = obs_preds$predictions[ , 1] * max_bathy,
+         hi_pred_real = obs_preds$predictions[ , 3] * max_bathy,
          depth_real = depth * max_bathy,
          split_group = "Train 2019-21")
-# plot(depth ~ mean_pred, dum)
-# plot(depth_real ~ mean_pred_real, dum)
-
 
 # hold out predictions
 test_depth_baked <- prep(depth_recipe) %>%
@@ -127,10 +130,14 @@ test_depth_baked <- prep(depth_recipe) %>%
        new_data = test_depth %>% 
          dplyr::select(-ind_block, -max_bathy))
 test_preds <- predict(ranger_rf,
-                      data = test_depth_baked)
+                      data = test_depth_baked,
+                      type = "quantiles",
+                      quantiles = c(0.05, 0.5, 0.95))
 dum_test <- test_depth %>% 
-  mutate(mean_pred = test_preds$predictions,
+  mutate(mean_pred = test_preds$predictions[ , 2],
          mean_pred_real = mean_pred * max_bathy,
+         lo_pred_real = test_preds$predictions[ , 1] * max_bathy,
+         hi_pred_real = test_preds$predictions[ , 3] * max_bathy,
          depth_real = depth * max_bathy,
          split_group = "Test 2019-21")
 
@@ -141,11 +148,15 @@ test_depth_baked_22 <- prep(depth_recipe) %>%
        new_data = test_depth_22 %>% 
          dplyr::select(-max_bathy))
 test_preds_22<- predict(ranger_rf,
-                      data = test_depth_baked_22)
+                      data = test_depth_baked_22,
+                      type = "quantiles",
+                      quantiles = c(0.05, 0.5, 0.95))
 dum_test_22 <- test_depth_22 %>% 
   mutate(ind_block = NA,
-         mean_pred = test_preds_22$predictions,
+         mean_pred = test_preds_22$predictions[ , 2],
          mean_pred_real = mean_pred * max_bathy,
+         lo_pred_real = test_preds_22$predictions[ , 1] * max_bathy,
+         hi_pred_real = test_preds_22$predictions[ , 3] * max_bathy,
          depth_real = depth * max_bathy,
          split_group = "Test 2022")
 
@@ -153,7 +164,10 @@ all_preds <- do.call(rbind,
                      list(dum, dum_test, dum_test_22)) %>% 
   mutate(
     split_group = fct_relevel(
-      as.factor(split_group), "Train 2019-21", after = 0)
+      as.factor(split_group), "Train 2019-21", after = 0),
+    interval_check = ifelse(
+      depth_real <= hi_pred_real & depth_real >= lo_pred_real, 1, 0
+    )
   )
 
 fit_obs <- ggplot() +
@@ -184,6 +198,16 @@ Metrics::rmse(dum$depth, dum$mean_pred)
 Metrics::rmse(dum_test$depth, dum_test$mean_pred)
 
 
+# proportion of datapoints within bounds
+all_preds %>% 
+  group_by(split_group) %>% 
+  summarize(
+    n_sample = n(),
+    n_check = sum(interval_check),
+    ppn_check = n_check / n_sample
+  )
+
+
 # VARIABLE IMPORTANCE ----------------------------------------------------------
 
 imp_vals <- ranger::importance(ranger_rf, type = "permutation", scale = F) 
@@ -191,10 +215,10 @@ imp_vals <- ranger::importance(ranger_rf, type = "permutation", scale = F)
 # key for axis labels
 var_name_key <- data.frame(
   var = names(imp_vals),
-  var_f = c("Fork Length", "Lipid Content", "UTM X", "UTM Y", "Year Day 2", 
+  var_f = c("Fork Length", "Lipid Content", "Maturity", "UTM X", "UTM Y", "Year Day 2", 
       "Year Day 1", "Bottom Depth", "Bottom Slope", "Shore Distance", 
       "Hor. Current 1", "Hor. Current 2", "Vert. Current", "Temperature", 
-      "Zooplankton", "Oxygen", "Thermocline Depth", "Lunar Cycle", "Maturity",
+      "Zooplankton", "Oxygen", "Thermocline Depth", "Lunar Cycle",
       "Day/Night")
 )
 
@@ -212,7 +236,7 @@ imp_dat <- data.frame(
                  "mean_slope") ~ "spatial",
       var %in% c("det_day", "det_dayx", "det_dayy",
                  "day_night_night", "moon_illuminated") ~ "temporal",
-      var %in% c("stage_mature", "fl", "lipid") ~ "biological",
+      var %in% c("med_stage", "fl", "lipid") ~ "biological",
       TRUE ~ "dynamic"
     )
   ) 
@@ -294,7 +318,8 @@ base_plot <- ggplot() +
 
 # biological data
 bio_dat <- depth_dat_raw %>% 
-  select(vemco_code, fl, lipid, stage) %>% 
+  # filter(med_stage %in% c("0", "1")) %>%
+  select(vemco_code, fl, lipid) %>% 
   distinct()
 
 # stratify predictions by non-spatial covariates
@@ -302,7 +327,7 @@ pred_dat1 <- bath_grid %>%
   mutate(
     fl = mean(bio_dat$fl),
     lipid = mean(bio_dat$lipid),
-    stage_mature = 0.5
+    med_stage = 0.5
   ) 
 
 pred_rf1 <- predict(ranger_rf,
@@ -388,20 +413,21 @@ dev.off()
 # 2) maturity effects for avg (July 1)
 # 3) moon illumination effects for avg  (July 1)
 stage_dat <- depth_dat_raw %>% 
-  select(vemco_code, fl, lipid, stage) %>% 
+  filter(med_stage %in% c("0", "1")) %>% 
+  select(vemco_code, fl, lipid, med_stage) %>% 
   distinct() %>% 
-  group_by(stage) %>% 
+  group_by(med_stage) %>% 
   dplyr::summarize(
     fl = mean(fl),
     lipid = mean(lipid)
   ) %>% 
-  mutate(stage_mature = ifelse(stage == "mature", 1, 0)) %>% 
+  mutate(stage = ifelse(med_stage == "1", "mature", "immature")) %>% 
   rbind(., 
         data.frame(
           stage = "average",
-          fl = mean(depth_dat_raw$fl),
-          lipid = mean(depth_dat_raw$lipid),
-          stage_mature = 0.5
+          fl = mean(bio_dat$fl),
+          lipid = mean(bio_dat$lipid),
+          med_stage = 0.5
         ))
 
 # subset bath_grid to remove covariates defined in predictive tibble

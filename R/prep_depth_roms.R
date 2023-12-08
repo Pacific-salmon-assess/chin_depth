@@ -38,20 +38,8 @@ time_foo <- function(x) {
 rec_full <- readRDS(here::here("data", "receivers_all.RDS"))
 rec <- rec_full$rec_all 
 
-dum <- rec %>% 
-  select(station_latitude, station_longitude, mean_depth) %>% 
-  distinct() %>% 
-  group_by(station_latitude, station_longitude) %>% 
-  tally() %>% 
-  filter(n > 1)
 
-rec %>% 
-  filter(station_latitude %in% dum$station_latitude[1:2] & 
-           station_longitude %in% dum$station_longitude[1:2]) %>% 
-  select(station_name, deploymentdatetime_timestamp, recoverydatetime_timestamp,
-         mean_depth)
-
-# life stage estimates
+# initial life stage estimates (includes unknowns)
 stage_dat <- readRDS(here::here("data", "agg_lifestage_df.RDS")) %>% 
   dplyr::select(fish, stage, agg) 
 chin_in <- readRDS(here::here("data", "acousticOnly_GSI.RDS")) %>% 
@@ -90,10 +78,13 @@ chin_stage <- left_join(chin_in, pred_stage, by = "fish") %>%
   mutate(med_stage = case_when(
     stage == "mature" ~ 1,
     stage == "immature" ~ 0,
+    #use median predicted posterior value when stage unknown
     TRUE ~ med
   )) %>% 
   filter(!is.na(acoustic_year)) %>%
-  select(acoustic_year, acoustic_type, fl, med_stage, lipid, cu_name, agg)
+  select(vemco_code = acoustic_year, acoustic_type, fl, med_stage, lipid,
+         cu_name, agg) %>% 
+  filter(grepl("V13P", acoustic_type))
 
 
 # ~2% of tags lack energy density estimates, impute
@@ -103,7 +94,6 @@ interp_stage_dat <- VIM::kNN(chin_stage, k = 5) %>%
 
 # moderately cleaned detections data (includes depth/temperature sensors)
 depth_raw <- readRDS(here::here("data", "detections_all.RDS")) %>%
-  glimpse()
   left_join(., interp_stage_dat, 
             by = "vemco_code") %>% 
   left_join(., 
@@ -130,17 +120,21 @@ calc_lipid <- function(mean_energy) {
   )
 }
 
+# Import UBC data
 hendricks_bio <- readRDS(here::here("data", "hendricks_chin_dat.RDS")) %>% 
   mutate(
-    lipid = calc_lipid(exp(mean_log_e))
+    lipid = calc_lipid(exp(mean_log_e)),
+    med_stage = ifelse(stage == "mature", 1, 0)
   )
 
 depth_h <- readRDS(here::here("data", "hendricks_depth_dets.RDS")) %>% 
-  mutate(trim_sn = as.character(receiver_sn),
-         week = lubridate::week(date_time)) %>% 
+  mutate(
+    trim_sn = as.character(receiver_sn),
+    week = lubridate::week(date_time)
+  ) %>% 
   left_join(., 
             hendricks_bio %>% 
-              select(vemco_code, fl, lipid, cu_name, agg), 
+              select(vemco_code, med_stage, fl, lipid, cu_name, agg), 
             by = "vemco_code") %>%
   select(colnames(depth_raw)) 
 
@@ -429,12 +423,6 @@ roms_dat$utm_y <- depth_utm$Y / 1000
 roms_dat[roms_dat == "-999"] <- NA
 
 
-# plot locations of missing stations
-coast <- readRDS(here::here("data",
-                            "coast_major_river_sf_plotting.RDS")) %>%
-  sf::st_crop(.,
-              xmin = -127.5, ymin = 46, xmax = -122, ymax = 49.5)
-
 
 # join with receiver data (includes bathymetric variables) and impute using
 # k nearest neighbors
@@ -509,6 +497,7 @@ depth_dat <- depth_dets1 %>%
   mutate(
     nn = n(),
     rep_number = row_number(),
+    # depth = mean(depth),
     mean_bathy = ifelse(nn > 1, mean(mean_bathy), mean_bathy),
     max_bathy = ifelse(nn > 1, mean(max_bathy), max_bathy),
     mean_slope = ifelse(nn > 1, mean(mean_slope), mean_slope),
@@ -538,6 +527,8 @@ depth_dat <- depth_dets1 %>%
     # corrections for when depth deeper than max bathy depth
     depth_diff = max_bathy - depth,
     depth = ifelse(depth_diff > -2.5 & depth_diff < 0, max_bathy - 0.5, depth),
+    # corrections for when depth slightly above surface
+    depth = ifelse(depth < 0 & depth > -1.5, 0.5, depth),
     # misc timestamp cleaning
     date_time_local = lubridate::with_tz(date_time, 
                                          tzone = "America/Los_Angeles"),
@@ -549,18 +540,18 @@ depth_dat <- depth_dets1 %>%
       as.numeric(),
     # redefine stage so that immature fish become mature May 1 of following
     # year
-    stage = ifelse(
-      stage == "immature" & year > tag_year & local_day > 120,
-      "mature",
-      stage
+    med_stage = ifelse(
+      med_stage < 0.0001 & year > tag_year & local_day > 120,
+      1,
+      med_stage
     )
   ) %>% 
   filter(
-    # remove large errors in depth relative to bottom bathymetry
-    depth < max_bathy
+    # remove large errors in depth relative to bottom bathymetry or above surface
+    depth < max_bathy,
+    depth > 0
   ) %>% 
   droplevels()
-
 
 
 # add moon data
@@ -580,17 +571,16 @@ temp <- suncalc::getSunlightTimes(data = sun_data,
 depth_dat2 <- cbind(depth_dat, temp %>% dplyr::select(sunrise, sunset)) %>%
   mutate(
     rel_depth = depth / max_bathy,
-    logit_rel_depth = boot::logit(rel_depth), 
+    logit_rel_depth = boot::logit(rel_depth),
     day_night = ifelse(date_time_local > sunrise & date_time_local < sunset,
                        "day", "night"),
     moon_illuminated = moon_data,
-    stage = as.factor(stage),
     #create cyclical time steps representing year day
     det_dayx = sin(2 * pi * local_day / 365),
     det_dayy = cos(2 * pi * local_day / 365)
   ) %>%
   dplyr::select(
-    vemco_code, cu_name, agg, fl, lipid, stage, trim_sn, 
+    vemco_code, cu_name, agg, fl, lipid, med_stage, trim_sn, 
     receiver_name, latitude, longitude, utm_y, utm_x, max_bathy,
     mean_bathy, mean_slope, 
     shore_dist, u, v, w, roms_temp, zoo, oxygen, thermo_depth,
@@ -681,11 +671,10 @@ saveRDS(pred_roms_out %>%
 ## BIOLOGICAL TRAITS FIGURE ----------------------------------------------------
 
 bio_dat <- rbind(
-  stage_dat %>% 
-    filter(grepl("V13P", acoustic_type)) %>% 
-    select(vemco_code, lipid, fl, stage = stage_predicted, cu_name, agg),
+  chin_stage %>% 
+    select(vemco_code, lipid, fl, med_stage, cu_name, agg),
   hendricks_bio %>% 
-    select(vemco_code, lipid, fl, stage, cu_name, agg)
+    select(vemco_code, lipid, fl, med_stage, cu_name, agg)
 ) %>% 
   mutate(
     agg = case_when(
@@ -699,18 +688,14 @@ bio_dat <- rbind(
       cu_name == "Lower Columbia River" ~ "LowCol",
       TRUE ~ agg
     ),
-    # agg = fct_recode(
-    #   agg, "Cali." = "Cali", "Upriver\nCol." = "Col", "Fraser\nSub." = "FraserSub",
-    #   "Fraser\nYear." = "FraserYear", "Lower\nCol." = "LowCol",
-    #   "Puget\nSound" = "PugetSo", "WA/OR." = "WA_OR"
-    # ),
     agg = factor(
       agg,
       levels = c("Cali", "WA_OR", "Col", "LowCol", "PugetSo", "FraserYear",
                  "FraserSub", "ECVI", "WCVI"),
       labels = c("Cali.", "WA/OR.", "Upriver\nCol.", "Lower\nCol.", 
                  "Puget\nSound", "Fraser\nYear.", "Fraser\nSub.", "ECVI", 
-                 "WCVI"))
+                 "WCVI")),
+    stage = ifelse(med_stage > 0.5, "mature", "immature")
   )
 
 n_tags_fl <- bio_dat %>% 
@@ -793,8 +778,8 @@ bottom_dot <- ggplot(depth_dat2 %>%
                        filter(
                          !is.na(roms_temp)
                        )) +
-  geom_point(aes(x = max_bathy, y = -1 * pos_depth, fill = stage),
-             shape = 21, alpha = 0.3) +
+  geom_point(aes(x = max_bathy, y = -1 * pos_depth, colour = med_stage), 
+             alpha = 0.3) +
   geom_abline(aes(intercept = 0, slope = -1)) +
   labs(y = "Observed Depth (m)", 
        x = "Maximum Bottom Depth\nWithin Detection Radius (m)") +
@@ -803,8 +788,7 @@ bottom_dot <- ggplot(depth_dat2 %>%
     breaks = c(0, -100, -200, -300), 
     labels = seq(0, 300, by = 100)
   ) +
-  facet_wrap(~stage, ncol = 1) +
-  theme(legend.position = "none")
+  scale_colour_gradient2(midpoint = 0.5, name = "Maturation Stage") 
 
 png(here::here("figs", "ms_figs_rel", "depth_vs_bathy.png"),
     height = 150, width = 85, units = "mm", res = 300)

@@ -1,34 +1,37 @@
-Conservation Unit,Stock Aggregate,Stock Aggregate Abbreviation
-California Central Valley_Fall,California,Cali
-California Central Valley_Spring,California,Cali
-Upper Columbia River_SU_FA,Upriver Columbia and Snake,Up. Col.
-Snake River_FA,Upriver Columbia and Snake,Up. Col.
-Okanagan_1.x,Upriver Columbia and Snake,Up. Col.
-Mid Columbia River_SP,Upriver Columbia and Snake,Up. Col.
-East Vancouver Island-Georgia Strait_SU_0.3,Eastcoast Vancouver Island,ECVI
-East Vancouver Island-Cowichan and Koksilah_FA_0.x,Eastcoast Vancouver Island,ECVI
-East Vancouver Island-North_FA_0.x,Eastcoast Vancouver Island,ECVI
-East Vancouver Island-Qualicum and Puntledge_FA_0.x,Eastcoast Vancouver Island,ECVI
-Lower Fraser River_FA_0.3,Fraser River Subyearling,Fraser Sub.
-South Thompson_SU_0.3,Fraser River Subyearling,Fraser Sub.
-Shuswap River_SU_0.3,Fraser River Subyearling,Fraser Sub.
-California Central Valley_Fall,Fraser River Subyearling,Fraser Sub.
-Lower Columbia River,Fraser River Subyearling,Fraser Sub.
-Middle Fraser River_SU_1.3,Fraser River Yearling,Fraser Year.
-Lower Thompson_SP_1.2,Fraser River Yearling,Fraser Year.
-North Thompson_SU_1.3,Fraser River Yearling,Fraser Year.
-South Thompson_SU_1.3,Fraser River Yearling,Fraser Year.
-Upper Fraser River_SP_1.3,Fraser River Yearling,Fraser Year.
-Middle Fraser River_SP_1.3,Fraser River Yearling,Fraser Year.
-Lower Fraser River_SU_1.3,Fraser River Yearling,Fraser Year.
-Lower Columbia River,Lower Columbia and Willamette ,Low. Col.
-Upper Willamette River,Lower Columbia and Willamette ,Low. Col.
-South Puget Sound,Puget Sound,Puget Sd.
-North Puget Sound,Puget Sound,Puget Sd.
-Mid Puget Sound,Puget Sound,Puget Sd.
-North & Central Oregon,Washington and Oregon Coastal,Wa./Or.
-South Oregon coastal,Washington and Oregon Coastal,Wa./Or.
-Coastal Washington,Washington and Oregon Coastal,Wa./Or.
-Juan de Fuca,Washington and Oregon Coastal,Wa./Or.
-West Vancouver Island-South_FA_0.x,Westcoast Vancouver Island,WCVI
-West Vancouver Island-Nootka and Kyuquot_FA_0.x,Westcoast Vancouver Island,WCVI
+"","cu_name","agg"
+"1","California Central Valley_Fall","Cali"
+"2","California Central Valley_Spring","Cali"
+"3","Upper Columbia River_SU_FA","Col"
+"4","Okanagan_1.x","Col"
+"5","Mid Columbia River_SP","Col"
+"6","East Vancouver Island-Georgia Strait_SU_0.3","ECVI"
+"7","East Vancouver Island-Cowichan and Koksilah_FA_0.x","ECVI"
+"8","East Vancouver Island-North_FA_0.x","ECVI"
+"9","East Vancouver Island-Qualicum and Puntledge_FA_0.x","ECVI"
+"10","California Central Valley_Fall","Fraser Sub."
+"11","Lower Fraser River_FA_0.3","FraserSub"
+"12","South Thompson_SU_0.3","FraserSub"
+"13","Shuswap River_SU_0.3","FraserSub"
+"14","Middle Fraser River_SU_1.3","FraserYear"
+"15","Lower Thompson_SP_1.2","FraserYear"
+"16","North Thompson_SU_1.3","FraserYear"
+"17","South Thompson_SU_1.3","FraserYear"
+"18","Upper Fraser River_SP_1.3","FraserYear"
+"19","Klinaklini_SU_1.3","FraserYear"
+"20","Lower Fraser River-Upper Pitt_SU_1.3","FraserYear"
+"21","Middle Fraser River_SP_1.3","FraserYear"
+"22","Lower Fraser River_SU_1.3","FraserYear"
+"23","Lower Columbia River","LowCol"
+"24","Upper Willamette River","LowCol"
+"25","South Puget Sound","Puget Sound"
+"26","North Puget Sound","Puget Sound"
+"27","Mid Puget Sound","PugetSo"
+"28","North Puget Sound","PugetSo"
+"29","South Puget Sound","PugetSo"
+"30","Snake River_FA","Up Col."
+"31","North & Central Oregon","WA_OR"
+"32","South Oregon coastal","WA_OR"
+"33","Coastal Washington","WA_OR"
+"34","Juan de Fuca","WA_OR"
+"35","West Vancouver Island-South_FA_0.x","WCVI"
+"36","West Vancouver Island-Nootka and Kyuquot_FA_0.x","WCVI"

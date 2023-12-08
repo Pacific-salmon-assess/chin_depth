@@ -62,8 +62,8 @@ ind_folds <- data.frame(
     as.factor()
 )
 
-
-depth_dat <- depth_dat_raw %>% 
+# with AR
+depth_dat_ar <- depth_dat_raw %>% 
   group_by(vemco_code) %>% 
   mutate(
     start_time = min(date_time_utm),
@@ -72,25 +72,29 @@ depth_dat <- depth_dat_raw %>%
     timestamp_f = cut_width(timestamp, width = 60, boundary = -0.1)
   ) %>% 
   group_by(vemco_code, 
-           date_time_hour,
+           timestamp_f,
            fl, lipid, stage_dummy, utm_x, utm_y,
            day_night_dummy, local_day, mean_bathy, mean_slope, shore_dist,
            u, v, w, roms_temp, zoo, oxygen, thermo_depth) %>% 
-  summarize(
+  dplyr::mutate(
     moon_illuminated = mean(moon_illuminated),
+    timestamp_n = mean(timestamp) + rnorm(1, 0, 0.01),
+    date_time_utm = mean(date_time_utm),
     mean_rel_depth = mean(rel_depth),
-    sd_rel_depth = sd(rel_depth),
-    .groups = "drop"
-  ) %>% 
+    bin_id = row_number()#,
+    # .groups = "drop"
+  ) %>%
+  ungroup() %>%
   left_join(., ind_folds, by = "vemco_code") %>% 
-  ungroup()
+  # remove redundant observations
+  filter(bin_id == "1")
 
 
 # split by individual blocking (identical to random forest)
-train_depth <- depth_dat %>% filter(!ind_block == "5") %>% droplevels()
-test_depth <- depth_dat %>% filter(ind_block == "5") %>% droplevels()
-test_depth_22 <- depth_dat_raw1 %>% 
-  group_by(vemco_code, date_time_hour, fl, lipid, stage_dummy, utm_x, utm_y, 
+train_depth <- depth_dat_ar %>% filter(!ind_block == "5") %>% droplevels()
+test_depth <- depth_dat_ar %>% filter(ind_block == "5") %>% droplevels()
+test_depth_22 <- depth_dat_ar %>% 
+  group_by(vemco_code, timestamp_n, fl, lipid, stage_dummy, utm_x, utm_y, 
            day_night_dummy, local_day, mean_bathy, mean_slope, shore_dist,
            u, v, w, roms_temp, zoo, oxygen, thermo_depth) %>% 
   summarize(
@@ -107,7 +111,7 @@ test_depth_22 <- depth_dat_raw1 %>%
 hist(depth_dat$sd_rel_depth)
 
 # how balanced?
-det_rates_binned <- depth_dat %>% 
+det_rates_binned <- depth_dat_ar %>% 
   group_by(vemco_code) %>% 
   summarize(
     n_dets = n(),
@@ -126,15 +130,28 @@ det_rates %>%
 ## FIT -------------------------------------------------------------------------
 
 
-fit1 <- gam(
+fit1ar <- gamm(
   mean_rel_depth ~ te(utm_x, utm_y, bs=c("tp", "tp"), k=c(10, 10)) +
     s(mean_bathy, k = 3) + 
     s(local_day, bs = "cc", k = 5) + 
     day_night_dummy + stage_dummy +# fl + lipid +
     s(vemco_code, bs = "re"),
+  correlation = corCAR1(form = ~ timestamp_n | vemco_code),
   data = train_depth,
   knots = list(local_day = c(0, 365)),
-  family = betar(link = "logit")
+  family = betar(link = "logit"),
+  method = "REML"
+)
+
+gamm(
+  pos_depth ~ region_f + #s(hour_c, bs = "cc", m = 2) +
+    s(hour_c, by = region_f, bs = "cc") +
+    s(max_bathy_c) + s(vemco_code, bs = "re"),
+  correlation = corCAR1(form = ~ timestamp_n | vemco_code),
+  data = trim_depth,
+  family = Gamma(link = "log"),
+  method = "REML",
+  control = ctrl
 )
 
 fit2 <- gam(

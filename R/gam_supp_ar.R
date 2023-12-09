@@ -130,29 +130,19 @@ det_rates %>%
 ## FIT -------------------------------------------------------------------------
 
 
-fit1ar <- gamm(
+fit1ar <- gam(
   mean_rel_depth ~ te(utm_x, utm_y, bs=c("tp", "tp"), k=c(10, 10)) +
+    s(timestamp_n, by = vemco_code) +
     s(mean_bathy, k = 3) + 
     s(local_day, bs = "cc", k = 5) + 
     day_night_dummy + stage_dummy +# fl + lipid +
     s(vemco_code, bs = "re"),
-  correlation = corCAR1(form = ~ timestamp_n | vemco_code),
   data = train_depth,
   knots = list(local_day = c(0, 365)),
   family = betar(link = "logit"),
   method = "REML"
 )
 
-gamm(
-  pos_depth ~ region_f + #s(hour_c, bs = "cc", m = 2) +
-    s(hour_c, by = region_f, bs = "cc") +
-    s(max_bathy_c) + s(vemco_code, bs = "re"),
-  correlation = corCAR1(form = ~ timestamp_n | vemco_code),
-  data = trim_depth,
-  family = Gamma(link = "log"),
-  method = "REML",
-  control = ctrl
-)
 
 fit2 <- gam(
   mean_rel_depth ~ te(utm_x, utm_y, bs=c("tp", "tp"), k = c(10, 10)) +

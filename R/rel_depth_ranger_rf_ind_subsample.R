@@ -24,20 +24,14 @@ depth_dat_raw1 <- readRDS(
   # approximately 7k detections have no available ROMS data; exclude 
   filter(!is.na(roms_temp)) %>% 
   group_by(vemco_code) %>% 
-  mutate(n_dets = n()) 
-
-high_dets_subset <- depth_dat_raw1 %>% 
-  filter(n_dets > 750) %>% 
-  slice_sample(n = 750)
-
-depth_dat_raw2 <- depth_dat_raw1 %>% 
-  filter(!n_dets < 750) %>% 
-  rbind(., high_dets_subset) %>% 
+  #weight based on number of observations
+  mutate(n_dets = n(),
+         wt = 1 / sqrt(n_dets)) %>% 
   ungroup()
 
 
 # remove 2022 tag releases (~6k dets) for training model
-depth_dat_raw <- depth_dat_raw2 %>% 
+depth_dat_raw <- depth_dat_raw1 %>% 
   filter(!grepl("2022", vemco_code))
 
 
@@ -56,21 +50,24 @@ ind_folds <- data.frame(
 
 depth_dat <- depth_dat_raw %>% 
   left_join(., ind_folds, by = "vemco_code") %>% 
+  mutate(
+    wt = hardhat::importance_weights(n_dets)
+  ) %>%
   dplyr::select(
-    depth = rel_depth, fl, lipid, stage, utm_x, utm_y, day_night,
+    depth = rel_depth, fl, lipid, med_stage, utm_x, utm_y, day_night,
     det_dayx, det_dayy,
     max_bathy, mean_bathy, mean_slope, shore_dist,
     u, v, w, roms_temp, zoo, oxygen, thermo_depth, moon_illuminated,
-    ind_block
+    ind_block, wt#, n_dets
   )  
 
 # split by individual blocking
 train_depth <- depth_dat %>% filter(!ind_block == "5") %>% droplevels()
 test_depth <- depth_dat %>% filter(ind_block == "5") %>% droplevels()
-test_depth_22 <- depth_dat_raw2 %>% 
+test_depth_22 <- depth_dat_raw1 %>% 
   filter(grepl("2022", vemco_code)) %>% 
   dplyr::select(
-    depth = rel_depth, fl, lipid, stage, utm_x, utm_y, day_night,
+    depth = rel_depth, fl, lipid, med_stage, utm_x, utm_y, day_night,
     det_dayx, det_dayy,
     max_bathy, mean_bathy, mean_slope, shore_dist,
     u, v, w, roms_temp, zoo, oxygen, thermo_depth, moon_illuminated)
@@ -78,25 +75,30 @@ test_depth_22 <- depth_dat_raw2 %>%
 
 depth_recipe <- recipe(depth ~ ., 
                        data = train_depth %>% 
-                         dplyr::select(-ind_block, -max_bathy)) %>% 
-  step_dummy(all_predictors(), -all_numeric())
+                         dplyr::select(-ind_block, -max_bathy
+                                       # , -wt, -n_dets
+                                       )) %>% 
+  step_dummy(all_predictors(), -all_numeric()) %>% 
+  add_case
 
 
 train_folds <- caret::groupKFold(train_depth$ind_block,
-                          k = length(unique(train_depth$ind_block)))
+                                 k = length(unique(train_depth$ind_block)))
 depth_ctrl <-   caret::trainControl(
-  method="repeatedcv",
+  method = "repeatedcv",
   index = train_folds
 )
 
-# apply recipe to dataframe to make dummy variables and 
+# apply recipe to dataframe to make dummy variables 
 train_depth_baked <- prep(depth_recipe) %>%
   bake(., 
        new_data = train_depth %>% 
-         dplyr::select(-ind_block, -max_bathy))
+         dplyr::select(-ind_block, -max_bathy
+                       , -wt, -n_dets
+         ))
 
 #pull model attributes from top ranger
-ranger_rf <- ranger::ranger(
+ranger_rf3 <- ranger::ranger(
   depth ~ .,
   data = train_depth_baked,
   #hyperpars based on values from top model which is not saved on all locals
@@ -106,14 +108,15 @@ ranger_rf <- ranger::ranger(
   keep.inbag = TRUE,
   quantreg = TRUE,
   importance = "permutation",
-  splitrule = "extratrees"
+  splitrule = "extratrees",
+  case.weights = train_depth$wt
 )
 
 saveRDS(ranger_rf,
-        here::here("data", "model_fits", "relative_rf_ranger_subset.rds"))
+        here::here("data", "model_fits", "relative_rf_ranger_weight.rds"))
 
 ranger_rf <- readRDS(
-  here::here("data", "model_fits", "relative_rf_ranger_subset.rds"))
+  here::here("data", "model_fits", "relative_rf_ranger_weight.rds"))
 
 
 # VARIABLE IMPORTANCE ----------------------------------------------------------

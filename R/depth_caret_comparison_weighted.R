@@ -30,7 +30,7 @@ if (Sys.info()['sysname'] == "Windows") {
 depth_dat_raw <- readRDS(
   here::here("data", "depth_dat_nobin.RDS")) %>% 
   filter(!is.na(roms_temp)) %>%
-  sample_n(., size = 5000) %>% 
+  # sample_n(., size = 5000) %>% 
   group_by(vemco_code) %>% 
   #weight based on number of observations
   mutate(n_dets = n(),
@@ -93,17 +93,22 @@ model_tbl$train_data <- map(dum, function (x) x$train)
 model_tbl$test_data <- map(dum, function (x) x$test)
 
 
-## add recipe 
+## add recipe and bake data
 # NOTE ind_block needs to be retained to identify subsequent blocking but must
 # be removed from recipe and prior to fitting
-model_tbl$recipe <- purrr::map(
+model_tbl$baked_train <- purrr::map(
   model_tbl$train_data,
   function (x) {
     dum <- x %>% 
       dplyr::select(-ind_block, -max_bathy)
     
-    recipe(depth_var ~ ., data = dum) %>% 
+    depth_recipe <- recipe(depth_var ~ ., data = dum) %>% 
       step_dummy(all_predictors(), -all_numeric())
+    
+    # bake outside of recipe due to issues with weights
+    prep(depth_recipe) %>%
+      bake(., 
+           new_data = dum)
 })
 
 
@@ -129,14 +134,14 @@ gbm_grid <-  expand.grid(
 )
 
 rf_grid <- expand.grid(tune_length = 10,
-                       n.trees = seq(500, 2500, by = 500))
+                       n.trees = seq(1000, 3000, by = 500))
 
 
-fit_foo <- function(model, recipe, train_data) {
+fit_foo <- function(model, baked_train) {
   if (model == "gbm") {
     fit <- train(
-      recipe,
-      train_data %>% dplyr::select(-ind_block, -max_bathy),
+      depth_var ~ .,
+      baked_train,
       method = "gbm", 
       metric = "RMSE",
       maximize = FALSE,
@@ -151,11 +156,11 @@ fit_foo <- function(model, recipe, train_data) {
     # iterate over different number of trees
     fits <- vector(length = length(rf_grid$n.trees), mode = "list")
     names(fits) <- paste("trees_", rf_grid$n.trees, sep = "")
-    wts <- ifelse(model == "rf_weighted", train_weights, NULL)
+    wts <- if (model == "rf_weighted") train_weights else NULL
     for (i in seq_along(fits)) {
       fits[[i]] <- train(
-        recipe,
-        train_data %>% dplyr::select(-ind_block, -max_bathy),
+        depth_var ~ .,
+        baked_train,
         method = "ranger", 
         weights = wts,
         metric = "RMSE",
@@ -182,53 +187,64 @@ fit_foo <- function(model, recipe, train_data) {
 }
 
 
-rf_tbl <- model_tbl %>% filter(model_type == "rf")
-tt <-  train(
-  rf_tbl$recipe[[1]],
-  rf_tbl$train_data[[1]] %>% dplyr::select(-ind_block, -max_bathy),
-  method = "ranger", 
-  weights = train_weights,
-  metric = "RMSE",
-  maximize = FALSE,
-  tuneLength = unique(rf_grid$tune_length),
-  trControl = ctrl,
-  num.trees = rf_grid$n.trees[1]
-) 
-tt2 <-  train(
-  rf_tbl$recipe[[1]],
-  rf_tbl$train_data[[1]] %>% dplyr::select(-ind_block, -max_bathy),
-  method = "ranger", 
-  # weights = train_weights,
-  metric = "RMSE",
-  maximize = FALSE,
-  tuneLength = unique(rf_grid$tune_length),
-  trControl = ctrl,
-  num.trees = rf_grid$n.trees[1]
-) 
-
+# rf_tbl <- model_tbl %>% filter(model_type == "rf")
+# tt2 <- train(
+#   rf_tbl$recipe[[1]],
+#   # depth_var ~ .,
+#   data = rf_tbl$train_data[[1]] %>%
+#     dplyr::select(-ind_block, -max_bathy),
+#   method = "ranger", 
+#   trControl = trainControl(method = "cv", number = 5)#, #ctrl, 
+#   # na.action = na.pass
+#   )
+# 
+# tt <-  caret::train(
+#   depth_var ~ .,
+#   rf_tbl$train_data[[1]] %>% dplyr::select(-ind_block, -max_bathy, -day_night),
+#   method = "ranger", 
+#   # weights = train_weights,
+#   metric = "RMSE",
+#   maximize = FALSE,
+#   tuneLength = unique(rf_grid$tune_length),
+#   trControl = ctrl,
+#   num.trees = rf_grid$n.trees[1]
+# ) 
+# 
+# tt2 <-  train(
+#   # rf_tbl$recipe[[1]],
+#   depth_var ~ .,
+#   rf_tbl$train_data[[1]] %>% dplyr::select(-ind_block, -max_bathy, -day_night),
+#   method = "ranger", 
+#   weights = train_weights,
+#   metric = "RMSE",
+#   maximize = FALSE,
+#   tuneLength = unique(rf_grid$tune_length),
+#   trControl = ctrl,
+#   num.trees = rf_grid$n.trees[1]
+# ) 
 
 # set up parallel
-plan(multisession, workers = 6)
+plan(multisession, workers = ncores)
 
 
 # fit models (separately)
 gbm_tbl <- model_tbl %>% filter(model_type == "gbm")
 gbm_list <- future_pmap(list("gbm",
-                             gbm_tbl$recipe,
-                             gbm_tbl$train_data),
+                             # gbm_tbl$recipe,
+                             gbm_tbl$baked_train),
                         .f = fit_foo,
                         .options = furrr_options(seed = TRUE))
 names(gbm_list) <- gbm_tbl$response
 saveRDS(gbm_list,
         here::here("data", "model_fits", "gbm_model_comparison.rds"))
-# gbm_list <- readRDS(
-#   here::here("data", "model_fits", "gbm_model_comparison.rds"))
+gbm_list <- readRDS(
+  here::here("data", "model_fits", "gbm_model_comparison.rds"))
 
 
 rf_tbl <- model_tbl %>% filter(model_type == "rf")
 rf_list <- future_pmap(list("rf",
-                            rf_tbl$recipe,
-                            rf_tbl$train_data),
+                            # rf_tbl$recipe,
+                            rf_tbl$baked_train),
                        .f = fit_foo,
                        .options = furrr_options(seed = TRUE))
 names(rf_list) <- rf_tbl$response
@@ -240,15 +256,17 @@ rf_list <- readRDS(here::here("data", "model_fits", "rf_model_comparison.rds"))
 rf_weighted_tbl <- model_tbl %>% filter(model_type == "rf_weighted")
 rf_weighted_list <- future_pmap(
   list("rf_weighted",
-       rf_weighted_tbl$recipe,
-       rf_weighted_tbl$train_data),
+       # rf_weighted_tbl$recipe,
+       rf_weighted_tbl$baked_train),
   .f = fit_foo,
   .options = furrr_options(seed = TRUE)
 )
 names(rf_weighted_list) <- rf_weighted_tbl$response
 saveRDS(rf_weighted_list,
         here::here("data", "model_fits", "rf_model_comparison_weighted.rds"))
-rf_list <- readRDS(here::here("data", "model_fits", "rf_model_comparison_weighted.rds"))
+rf_weighted_list <- readRDS(
+  here::here("data", "model_fits", "rf_model_comparison_weighted.rds")
+  )
 
 
 ## COMPARE MODEL STRUCTURES ----------------------------------------------------
@@ -258,29 +276,52 @@ rf_list <- readRDS(here::here("data", "model_fits", "rf_model_comparison_weighte
 # top ranger models then store new ranger objects in tibble
 rf_train_list <- model_tbl %>% 
   filter(model_type == "rf") %>% 
-  pull(train_data)
-top_rangers <- purrr::map2(rf_list, rf_train_list, function (x, y) {
-  top_mod <- x$top_model
-  baked_dat <- prep(model_tbl$recipe[[1]]) %>%
-    bake(.,
-         new_data = y)
-  
-  ranger::ranger(
-    depth_var ~ .,
-    data = baked_dat,
-    num.trees = top_mod$param$num.trees,
-    mtry = top_mod$tuneValue$mtry,
-    splitrule = top_mod$splitrule
+  pull(baked_train)
+top_rangers <- purrr::map2(
+  rf_list, rf_train_list, function (x, y) {
+    top_mod <- x$top_model
+    ranger::ranger(
+      depth_var ~ .,
+      data = y,
+      num.trees = top_mod$param$num.trees,
+      mtry = top_mod$tuneValue$mtry,
+      splitrule = top_mod$splitrule
+    )
+  }
   )
-})
+
+rf_weighted_train_list <- model_tbl %>% 
+  filter(model_type == "rf_weighted") %>% 
+  pull(baked_train)
+top_rangers_weighted <- purrr::map2(
+  rf_weighted_list, rf_weighted_train_list, function (x, y) {
+    top_mod <- x$top_model
+    
+    ranger::ranger(
+      depth_var ~ .,
+      data = y,
+      case.weights = train_weights,
+      num.trees = top_mod$param$num.trees,
+      mtry = top_mod$tuneValue$mtry,
+      splitrule = top_mod$splitrule
+    )
+    }
+  )
+
 
 # add models to tbl
 gbm_tbl <- model_tbl %>% filter(model_type == "gbm")
 rf_tbl <- model_tbl %>% filter(model_type == "rf")
-rf_tbl$top_model <- top_rangers #map(rf_list, function (x) x$top_model)
+rf_weighted_tbl <- model_tbl %>% filter(model_type == "rf_weighted")
+rf_tbl$top_model <- top_rangers
+rf_weighted_tbl$top_model <- top_rangers_weighted
 gbm_tbl$top_model <- map(gbm_list, function (x) x$top_model) 
-model_tbl <- rbind(rf_tbl, gbm_tbl)
+model_tbl <- list(gbm_tbl, rf_tbl, rf_weighted_tbl) %>% 
+  bind_rows()
 
+# pp <- predict(top_rangers[[1]], data = rf_tbl$baked_train[[1]])
+# pp2 <- predict(top_rangers_weighted[[1]], data = rf_weighted_tbl$baked_train[[1]])
+# plot(pp$predictions ~ pp2$predictions)
 
 # calculate RMSE relative to observations in real space for top models
 # bathy vectors to adjust proportional data
@@ -298,19 +339,23 @@ real_test <- rf_tbl %>%
   as.data.frame() %>% 
   mutate(max_bathy = test_bathy)
 
-rmse_foo <- function(
-    mod_in,
-    space = c("logit_rel_depth", "rel_depth", "depth"), 
-    model_type,
-    dat_in
+rmse_foo <- function (
+    mod_in, space = c("logit_rel_depth", "rel_depth", "depth"), 
+    model_type, dat_in
     ) {
   # apply recipe to convert factors to numeric
-  baked_dat <- prep(model_tbl$recipe[[1]]) %>%
-      bake(.,
-           new_data = dat_in %>%
-             dplyr::select(-depth_var, -ind_block, -max_bathy))
+  dum <- dat_in %>% 
+    dplyr::select(-ind_block, -max_bathy)
   
-  if (model_type == "rf") {
+  depth_recipe <- recipe(depth_var ~ ., data = dum) %>% 
+    step_dummy(all_predictors(), -all_numeric())
+  
+  # bake outside of recipe due to issues with weights
+  baked_dat <- prep(depth_recipe) %>%
+    bake(., 
+         new_data = dum)
+  
+  if (grepl("rf", model_type)) {
     preds <- predict(mod_in,
                      data = baked_dat)$predictions
   } else if (model_type == "gbm") {
@@ -410,6 +455,19 @@ rf_hyper_plot <- ggplot(rf_dat) +
   ggsidekick::theme_sleek()
 
 
+rf_weighted_dat <- map2(names(rf_weighted_list), rf_weighted_list, function (name, x) {
+  x$results %>% 
+    mutate(response = name,
+           min.node.size = as.factor(min.node.size))
+}) %>% 
+  bind_rows() 
+rf_weighted_hyper_plot <- ggplot(rf_weighted_dat) +
+  geom_line(aes(x = mtry, y = RMSE, color = splitrule)) +
+  facet_grid(response~n_trees, scales = "free_y") +
+  theme(legend.position = "top") +
+  ggsidekick::theme_sleek()
+
+
 ## export 
 png(here::here("figs", "model_comp", "gbm_hyper_plot.png"), units = "in",
     height = 4.5, width = 7.5, res = 250)
@@ -419,4 +477,9 @@ dev.off()
 png(here::here("figs", "model_comp", "rf_hyper_plot.png"), units = "in",
     height = 4.5, width = 7.5, res = 250)
 rf_hyper_plot
+dev.off()
+
+png(here::here("figs", "model_comp", "rf_weighted_hyper_plot.png"), units = "in",
+    height = 4.5, width = 7.5, res = 250)
+rf_weighted_hyper_plot
 dev.off()

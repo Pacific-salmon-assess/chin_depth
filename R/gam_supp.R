@@ -1,15 +1,19 @@
-## Fit hierarchical GAM
+## Compare original RF, weighted RF and hierarchical GAM
 
 # Fit approximately equivalent model to ML alternative based on feedback from
 # reviewers
-# Fit model, estimate conditional effects and evaluate hold out performance on
-# equivalent data
-# POTENTIAL ISSUES ENCOUNTERED EARLIER:
-# 1) autocorrelated residuals
-# 2) slow convergence 
+# Fit model, test for autocorrelation in residuals, estimate conditional effects
+# and evaluate hold out performance on equivalent data
+# NOTE: GAMM with explicit autocorrelation structure failed to converge
 
 library(tidyverse)
+library(caret)
+library(recipes)
+library(DALEX)
+library(DALEXtra)
+library(randomForest)
 library(mgcv)
+
 
 depth_dat_raw1 <- readRDS(
   here::here("data", "depth_dat_nobin.RDS")) %>%
@@ -18,8 +22,7 @@ depth_dat_raw1 <- readRDS(
   # define time in hours for binning (all roms variables constant)
   mutate(
     date_time_hour = format(date_time_utm, format = "%Y-%m-%d %H"),
-    day_night_dummy = ifelse(day_night == "night", 1, 0),
-    stage_dummy = ifelse(stage == "mature", 1, 0)
+    day_night_dummy = ifelse(day_night == "night", 1, 0)
   ) 
 
 
@@ -62,44 +65,49 @@ ind_folds <- data.frame(
     as.factor()
 )
 
+# binned data
+# depth_dat_bin <- depth_dat_raw %>% 
+#   group_by(vemco_code) %>% 
+#   mutate(
+#     start_time = min(date_time_utm),
+#     timestamp = difftime(start_time, date_time_utm, units = "mins"),
+#     timestamp = -1 * round(as.numeric(timestamp)),
+#     timestamp_f = cut_width(timestamp, width = 60, boundary = -0.1)
+#   ) %>% 
+#   group_by(vemco_code, 
+#            date_time_hour,
+#            fl, lipid, med_stage, utm_x, utm_y,
+#            day_night_dummy, local_day, mean_bathy, mean_slope, shore_dist,
+#            u, v, w, roms_temp, zoo, oxygen, thermo_depth) %>% 
+#   summarize(
+#     moon_illuminated = mean(moon_illuminated),
+#     mean_rel_depth = mean(rel_depth),
+#     sd_rel_depth = sd(rel_depth),
+#     .groups = "drop"
+#   ) %>% 
+#   left_join(., ind_folds, by = "vemco_code") %>% 
+#   ungroup()
 
 depth_dat <- depth_dat_raw %>% 
-  group_by(vemco_code) %>% 
-  mutate(
-    start_time = min(date_time_utm),
-    timestamp = difftime(start_time, date_time_utm, units = "mins"),
-    timestamp = -1 * round(as.numeric(timestamp)),
-    timestamp_f = cut_width(timestamp, width = 60, boundary = -0.1)
-  ) %>% 
-  group_by(vemco_code, 
-           date_time_hour,
-           fl, lipid, stage_dummy, utm_x, utm_y,
-           day_night_dummy, local_day, mean_bathy, mean_slope, shore_dist,
-           u, v, w, roms_temp, zoo, oxygen, thermo_depth) %>% 
-  summarize(
-    moon_illuminated = mean(moon_illuminated),
-    mean_rel_depth = mean(rel_depth),
-    sd_rel_depth = sd(rel_depth),
-    .groups = "drop"
-  ) %>% 
-  left_join(., ind_folds, by = "vemco_code") %>% 
-  ungroup()
+  left_join(., ind_folds, by = "vemco_code")
 
 
 # split by individual blocking (identical to random forest)
 train_depth <- depth_dat %>% filter(!ind_block == "5") %>% droplevels()
 test_depth <- depth_dat %>% filter(ind_block == "5") %>% droplevels()
-test_depth_22 <- depth_dat_raw1 %>% 
-  group_by(vemco_code, date_time_hour, fl, lipid, stage_dummy, utm_x, utm_y, 
-           day_night_dummy, local_day, mean_bathy, mean_slope, shore_dist,
-           u, v, w, roms_temp, zoo, oxygen, thermo_depth) %>% 
-  summarize(
-    moon_illuminated = mean(moon_illuminated),
-    mean_rel_depth = mean(rel_depth),
-    sd_rel_depth = sd(rel_depth),
-    .groups = "drop"
-  ) %>% 
-  ungroup()
+# test_depth_22 <- depth_dat_raw1 %>% 
+#   group_by(vemco_code, date_time_hour, fl, lipid, stage_dummy, utm_x, utm_y, 
+#            day_night_dummy, local_day, mean_bathy, mean_slope, shore_dist,
+#            u, v, w, roms_temp, zoo, oxygen, thermo_depth) %>% 
+#   summarize(
+#     moon_illuminated = mean(moon_illuminated),
+#     mean_rel_depth = mean(rel_depth),
+#     sd_rel_depth = sd(rel_depth),
+#     .groups = "drop"
+#   ) %>% 
+#   ungroup()
+
+test_depth_22 <- depth_dat_raw1 %>% filter(grepl("2022", vemco_code))
 
 
 ## SUBHOURLY VARIATION ---------------------------------------------------------
@@ -127,15 +135,17 @@ det_rates %>%
 
 
 fit1 <- gam(
-  mean_rel_depth ~ te(utm_x, utm_y, bs=c("tp", "tp"), k=c(10, 10)) +
+  rel_depth ~ te(utm_x, utm_y, bs=c("tp", "tp"), k=c(10, 10)) +
     s(mean_bathy, k = 3) + 
     s(local_day, bs = "cc", k = 5) + 
-    day_night_dummy + stage_dummy +# fl + lipid +
+    s(med_stage, k = 4) +
+    day_night_dummy + #stage_dummy +# fl + lipid +
     s(vemco_code, bs = "re"),
   data = train_depth,
   knots = list(local_day = c(0, 365)),
   family = betar(link = "logit")
 )
+
 
 fit2 <- gam(
   mean_rel_depth ~ te(utm_x, utm_y, bs=c("tp", "tp"), k = c(10, 10)) +
@@ -171,6 +181,12 @@ saveRDS(fit_list, here::here("data", "model_fits", "gam_fits.rds"))
 
 
 ## CHECK RESIDUALS -------------------------------------------------------------
+
+rf_list <- readRDS(here::here("data", "model_fits", "rf_model_comparison.rds"))
+
+rf_weighted_list <- readRDS(
+  here::here("data", "model_fits", "rf_model_comparison_weighted.rds")
+)
 
 resids <- resid(fit2)
 

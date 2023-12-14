@@ -15,6 +15,19 @@ library(randomForest)
 library(mgcv)
 
 
+# parallelize based on operating system
+library("parallel")
+ncores <- detectCores() - 2
+if (Sys.info()['sysname'] == "Windows") {
+  library("doParallel")
+  cl <- makeCluster(ncores)
+  registerDoParallel(cl)
+} else {
+  doMC::registerDoMC(ncores)
+}
+
+
+
 depth_dat_raw1 <- readRDS(
   here::here("data", "depth_dat_nobin.RDS")) %>%
   # approximately 7k detections have no available ROMS data; exclude 
@@ -27,7 +40,17 @@ depth_dat_raw1 <- readRDS(
   group_by(vemco_code) %>% 
   #weight based on number of observations
   mutate(n_dets = n(),
-         wt = 1 / sqrt(n_dets)) %>% 
+         wt = 1 / sqrt(n_dets),
+         # add time steps
+         start_time = min(date_time_utm),
+         end_time = max(date_time_utm),
+         timestamp = difftime(start_time, date_time_utm, units = "mins"),
+         timestamp = -1 * round(as.numeric(timestamp)),
+         start_time_hour = min(date_time_hour),
+         end_time_hour = max(date_time_hour),
+         timestamp_hour = difftime(start_time_hour, 
+                                   date_time_hour, units = "hours"),
+         timestamp_hour = -1 * round(as.numeric(timestamp_hour))) %>% 
   ungroup() 
 
 
@@ -71,27 +94,20 @@ ind_folds <- data.frame(
 )
 
 # binned data
-# depth_dat_bin <- depth_dat_raw %>% 
-#   group_by(vemco_code) %>% 
-#   mutate(
-#     start_time = min(date_time_utm),
-#     timestamp = difftime(start_time, date_time_utm, units = "mins"),
-#     timestamp = -1 * round(as.numeric(timestamp)),
-#     timestamp_f = cut_width(timestamp, width = 60, boundary = -0.1)
-#   ) %>% 
-#   group_by(vemco_code, 
-#            date_time_hour,
-#            fl, lipid, med_stage, utm_x, utm_y,
-#            day_night_dummy, local_day, mean_bathy, mean_slope, shore_dist,
-#            u, v, w, roms_temp, zoo, oxygen, thermo_depth) %>% 
-#   summarize(
-#     moon_illuminated = mean(moon_illuminated),
-#     mean_rel_depth = mean(rel_depth),
-#     sd_rel_depth = sd(rel_depth),
-#     .groups = "drop"
-#   ) %>% 
-#   left_join(., ind_folds, by = "vemco_code") %>% 
-#   ungroup()
+depth_dat_bin <- depth_dat_raw %>%
+  group_by(vemco_code,
+           timestamp_hour, 
+           fl, lipid, med_stage, utm_x, utm_y,
+           day_night_dummy, local_day, mean_bathy, mean_slope, shore_dist,
+           u, v, w, roms_temp, zoo, oxygen, thermo_depth) %>%
+  summarize(
+    moon_illuminated = mean(moon_illuminated),
+    mean_rel_depth = mean(rel_depth),
+    sd_rel_depth = sd(rel_depth),
+    .groups = "drop"
+  ) %>%
+  left_join(., ind_folds, by = "vemco_code") %>%
+  ungroup()
 
 depth_dat <- depth_dat_raw %>% 
   left_join(., ind_folds, by = "vemco_code")
@@ -100,153 +116,52 @@ depth_dat <- depth_dat_raw %>%
 # split by individual blocking (identical to random forest)
 train_depth <- depth_dat %>% filter(!ind_block == "5") %>% droplevels()
 test_depth <- depth_dat %>% filter(ind_block == "5") %>% droplevels()
-# test_depth_22 <- depth_dat_raw1 %>% 
-#   group_by(vemco_code, date_time_hour, fl, lipid, stage_dummy, utm_x, utm_y, 
-#            day_night_dummy, local_day, mean_bathy, mean_slope, shore_dist,
-#            u, v, w, roms_temp, zoo, oxygen, thermo_depth) %>% 
-#   summarize(
-#     moon_illuminated = mean(moon_illuminated),
-#     mean_rel_depth = mean(rel_depth),
-#     sd_rel_depth = sd(rel_depth),
-#     .groups = "drop"
-#   ) %>% 
-#   ungroup()
+
+train_bin <- depth_dat_bin %>% 
+  filter(!ind_block == "5") %>% 
+  droplevels() 
 
 test_depth_22 <- depth_dat_raw1 %>% filter(grepl("2022", vemco_code))
-
-
-## SUBHOURLY VARIATION ---------------------------------------------------------
-
-hist(depth_dat$sd_rel_depth)
-
-# how balanced?
-det_rates_binned <- depth_dat %>% 
-  group_by(vemco_code) %>% 
-  summarize(
-    n_dets = n(),
-    n_days = length(unique(local_day))
-  ) %>% 
-  mutate(
-    n_det_bin = cut(n_dets, breaks = c(0, 10, 100, 1000, 10000)),
-    n_day_bin = cut(n_days, breaks = c(0, 10, 30, 100, 500))
-  )
-
-det_rates %>% 
-  group_by(n_det_bin) %>% 
-  tally()
 
 
 ## FIT GAMS --------------------------------------------------------------------
 
 
-fit1 <- gam(
+fit_full <- gam(
   rel_depth ~ te(utm_x, utm_y, bs=c("tp", "tp"), k=c(10, 10)) +
     s(mean_bathy, k = 3) + 
     s(local_day, bs = "cc", k = 5) + 
     s(med_stage, k = 4) +
-    day_night_dummy + #stage_dummy +# fl + lipid +
+    day_night_dummy + 
     s(vemco_code, bs = "re"),
   data = train_depth,
   knots = list(local_day = c(0, 365)),
   family = betar(link = "logit")
 )
 
-
-fit2 <- gam(
-  mean_rel_depth ~ te(utm_x, utm_y, bs=c("tp", "tp"), k = c(10, 10)) +
-    s(mean_bathy, k = 3) + s(mean_slope, k = 3) + 
-    s(local_day, bs = "cc", k = 5) + 
-    day_night_dummy + stage_dummy +
-    fl + lipid + zoo + shore_dist + moon_illuminated + 
-    s(vemco_code, bs = "re"),
-  data = train_depth,
-  knots = list(local_day = c(0, 365)),
-  family = betar(link = "logit")
-)
-
-fit3 <- gam(
+fit_sub <- gam(
   mean_rel_depth ~ te(utm_x, utm_y, bs=c("tp", "tp"), k = c(10, 10)) +
     s(mean_bathy, k = 5) + s(mean_slope, k = 5) + 
     s(local_day, bs = "cc", k = 5) + 
-    day_night_dummy + stage_dummy + thermo_depth +
+    s(med_stage, k = 4) +
+    day_night_dummy + thermo_depth +
     fl + lipid + s(zoo, k = 5) + shore_dist + moon_illuminated + u + v + w + 
     roms_temp +
     s(vemco_code, bs = "re"),
-  data = train_depth,
+  data = train_bin,
   knots = list(local_day = c(0, 365)),
   family = betar(link = "logit")
 )
 
 
-concurvity(fit1)
-concurvity(fit2)
+saveRDS(fit_sub, here::here("data", "model_fits", "gam_fits_sub.rds"))
+saveRDS(fit_full, here::here("data", "model_fits", "gam_fits_full.rds"))
 
-fit_list <- list(fit1, fit2, fit3)
-saveRDS(fit_list, here::here("data", "model_fits", "gam_fits.rds"))
-saveRDS(fit1, here::here("data", "model_fits", "gam_fits_full.rds"))
-
+fit_full <- readRDS(here::here("data", "model_fits", "gam_fits_full.rds"))
 fit_list <- readRDS(here::here("data", "model_fits", "gam_fits.rds"))
 
 
-## FIT RANGERS -----------------------------------------------------------------
-
-
-rf_list <- readRDS(here::here("data", "model_fits", "rf_model_comparison.rds"))
-rf_weighted_list <- readRDS(
-  here::here("data", "model_fits", "rf_model_comparison_weighted.rds")
-)
-
-
-train_depth_ml <- train_depth %>% 
-  rename(day_night_night = day_night_dummy) %>% 
-  select(rel_depth, 
-         rf_weighted_list)
-
-ranger_rf <- ranger::ranger(
-  depth ~ .,
-  data = train_depth_baked,
-  num.trees =  1500, #$rf_list$rel_depth$top_model$num.trees,
-  mtry = 7, #rf_list$rel_depth$top_model$mtry,
-  # keep.inbag = TRUE for quantile predictions
-  keep.inbag = TRUE,
-  quantreg = TRUE,
-  importance = "permutation",
-  splitrule = "extratrees"
-)
-
-ranger_rf_w <- ranger::ranger(
-  depth ~ .,
-  data = train_depth_baked,
-  num.trees =  2500,#rf_weighted_list$rel_depth$top_model$num.trees,
-  mtry = 9, #rf_weighted_list$rel_depth$top_model$mtry,
-  case.weights = train_depth$wt,
-  # keep.inbag = TRUE for quantile predictions
-  keep.inbag = TRUE,
-  quantreg = TRUE,
-  importance = "permutation",
-  splitrule = "extratrees"
-)
-
-## CHECK RESIDUALS -------------------------------------------------------------
-
-
-
-rf_w_fit <- rf_weighted_list$rel_depth
-
-resid_dat <- train_depth %>% 
-  mutate(
-    resid_gam = resid(fit1),
-    resid_rf = 
-  ) %>% 
-  arrange(
-    date_time_utm
-  ) %>% 
-  group_by(
-    vemco_code
-  ) %>% 
-  mutate(
-    mean_acf = acf(resids)$acf[2, 1, 1]
-  )
+## GAM CONVERGENCE -------------------------------------------------------------
 
 
 # normal distributed
@@ -298,6 +213,265 @@ qq_list <- purrr::pmap(
 # looks good
 
 
+## FIT RANGERS -----------------------------------------------------------------
+
+train_depth_ml <- train_depth %>% 
+  select(rel_depth, fl, lipid, med_stage, utm_y, utm_x, mean_bathy, mean_slope,
+         shore_dist, u, v, w, roms_temp, zoo, oxygen, thermo_depth, det_dayx,
+         det_dayy, moon_illuminated, day_night_dummy)
+
+# hyperpars based on top model from depth_caret_comparison_weighted.R
+ranger_rf <- ranger::ranger(
+  rel_depth ~ .,
+  data = train_depth_ml,
+  num.trees =  1500, #$rf_list$rel_depth$top_model$num.trees,
+  mtry = 7, #rf_list$rel_depth$top_model$mtry,
+  # keep.inbag = TRUE for quantile predictions
+  keep.inbag = TRUE,
+  quantreg = TRUE,
+  importance = "permutation",
+  splitrule = "extratrees"
+)
+
+ranger_rf_w <- ranger::ranger(
+  rel_depth ~ .,
+  data = train_depth_ml,
+  num.trees =  2500,#rf_weighted_list$rel_depth$top_model$num.trees,
+  mtry = 9, #rf_weighted_list$rel_depth$top_model$mtry,
+  case.weights = train_depth$wt,
+  # keep.inbag = TRUE for quantile predictions
+  keep.inbag = TRUE,
+  # quantreg = TRUE,
+  importance = "permutation",
+  splitrule = "extratrees"
+)
+
+rf_preds <- predict(ranger_rf, data = train_depth_ml)
+rf_w_preds <- predict(ranger_rf_w, data = train_depth_ml)
+
+
+## CHECK AUTOCORRELATION -------------------------------------------------------
+
+gam_preds <- predict(fit_full, type = "response") %>% as.numeric()
+
+# calculate pearson residuals from each model
+p_resid <- function (pred, obs) {
+  (obs - pred) / sqrt(pred * (1 - pred))
+}
+
+resid_dat <- train_depth %>% 
+  mutate(
+    resid_gam = p_resid(gam_preds, rel_depth),
+    resid_rf = p_resid(rf_preds$predictions, rel_depth),
+    resid_rf_w = p_resid(rf_w_preds$predictions, rel_depth)
+  ) %>% 
+  arrange(
+    date_time_utm
+  )
+
+
+
+## temporal autocorrelation
+
+# ID tags w/ mult dets
+kept_tags <- resid_dat %>% 
+  filter(n_dets > 1) %>% 
+  pull(vemco_code) %>% 
+  unique()
+kept_tags_bin <- train_bin %>% 
+  group_by(vemco_code) %>% 
+  mutate(n_dets = n()) %>% 
+  filter(n_dets > 1) %>% 
+  pull(vemco_code) %>% 
+  unique()
+
+train_bin$resid_gam_bin <- residuals(fit_sub, type = "pearson")
+
+# infill function 
+infill_foo <- function(dum, timestep = "timestamp") {
+  dd <- dum %>% 
+    rename(tt = {{ timestep }})
+  expand.grid(
+    timestamp = seq(min(dd$tt), max(dd$tt), by = 1)
+  ) %>% 
+    left_join(., 
+              dd %>%
+                select(vemco_code, timestamp = tt, starts_with("resid")),
+              by = "timestamp")
+}
+
+# calculate acf for each tag
+resid_ts <- resid_dat %>% 
+  droplevels() %>% 
+  split(., .$vemco_code) %>% 
+  furrr::future_map(
+    ., ~ infill_foo(., timestep = "timestamp")
+  )
+resid_ts_bin <- train_bin %>% 
+  droplevels() %>% 
+  split(., .$vemco_code) %>% 
+  furrr::future_map(
+    ., ~ infill_foo(., timestep = "timestamp_hour")
+  )
+
+ar1_est <- resid_ts %>% 
+  bind_rows() %>% 
+  filter(vemco_code %in% kept_tags) %>% 
+  group_by(vemco_code) %>% 
+  summarize(
+    gam = acf(resid_gam, plot = FALSE, na.action = na.pass)$acf[2, 1, 1],
+    rf = acf(resid_rf, plot = FALSE, na.action = na.pass)$acf[2, 1, 1],
+    rf_w = acf(resid_rf_w, plot = FALSE, na.action = na.pass)$acf[2, 1, 1]
+  ) 
+ar1_est_bin <- resid_ts_bin %>% 
+  bind_rows() %>% 
+  filter(vemco_code %in% kept_tags_bin) %>% 
+  group_by(vemco_code) %>% 
+  summarize(
+    ar1 = acf(resid_gam_bin, plot = FALSE, na.action = na.pass)$acf[2, 1, 1]
+  ) %>% 
+  mutate(model = "gam_bin")
+
+ar1_est2 <- ar1_est %>% 
+  pivot_longer(cols = c(gam, rf, rf_w), names_to = "model", values_to = "ar1") %>% 
+  rbind(., ar1_est_bin) %>% 
+  mutate(
+    model_family = ifelse(grepl("gam", model), "gam", "random_forest")
+  ) %>% 
+  filter(
+    !is.na(ar1)
+  )
+
+ar1_box <- ggplot(ar1_est2, aes(x = model, y = ar1, fill = model_family)) +
+  geom_boxplot() +
+  ggsidekick::theme_sleek() +
+  labs(x = "Model", y = "Tag-Specific AR-1 Estimate")
+
+png(here::here("figs", "model_comp", "ar1_plot.png"), units = "in",
+    height = 3.5, width = 4.5, res = 250)
+ar1_box
+dev.off()
+
+
+ar1_est2 %>% 
+  group_by(model) %>% 
+  summarize(
+    med_ar1 = median(ar1),
+    mean_ar1 = mean(ar1),
+    sd_ar1 = sd(ar1)
+  )
+
+
+
+## spatial autocorrelation
+resid_long <- resid_dat %>% 
+  select(utm_x, utm_y, starts_with("resid")) %>% 
+  pivot_longer(cols = starts_with("resid"), names_to = "model", 
+               values_to = "resid", names_prefix = "resid_") 
+resid_long_bin <- train_bin %>% 
+  select(utm_x, utm_y, resid = resid_gam_bin) %>% 
+  mutate(model = "gam_bin")
+
+resid_long2 <- rbind(resid_long, resid_long_bin) %>% 
+  mutate(
+    model_family = ifelse(grepl("gam", model), "gam", "random_forest")
+  ) 
+  
+spatial_corr_x <- ggplot(
+  resid_long2, aes(x = utm_x, y = resid, fill = model_family)
+) +
+  geom_point(shape = 21, alpha = 0.3) +
+  ggsidekick::theme_sleek() +
+  geom_smooth(method = lm, level = 0.95) +
+  labs(x = "Easting", y = "Pearson Residual") +
+  facet_wrap(~model)
+
+png(here::here("figs", "model_comp", "sp_cor_plot_x.png"), units = "in",
+    height = 3.5, width = 4.5, res = 250)
+spatial_corr_x
+dev.off()
+
+
+spatial_corr_y <- ggplot(
+  resid_long2, aes(x = utm_y, y = resid, fill = model_family)
+) +
+  geom_point(shape = 21, alpha = 0.3) +
+  ggsidekick::theme_sleek() +
+  geom_smooth(method = lm, level = 0.95) +
+  labs(x = "Northing", y = "Pearson Residual") +
+  facet_wrap(~model)
+
+png(here::here("figs", "model_comp", "sp_cor_plot_y.png"), units = "in",
+    height = 3.5, width = 4.5, res = 250)
+spatial_corr_y
+dev.off()
+
+
+## OUT OF SAMPLE PREDS ---------------------------------------------------------
+
+rmse_dat <- ar1_est2 %>% 
+  select(model, model_family) %>% 
+  distinct() %>% 
+  arrange(model_family)
+
+
+gam_full_22 <- predict(
+  fit_full, type = "response", newdata = test_depth_22,
+  #estimate population level, excluding RIs for tag
+  exclude = "s(vemco_code)"
+) %>% 
+  as.numeric()
+gam_bin_22 <- predict(
+  fit_sub, type = "response", newdata = test_depth_22,
+  #estimate population level, excluding RIs for tag
+  exclude = "s(vemco_code)"
+) %>% 
+  as.numeric()
+
+rf_22 <- predict(
+  ranger_rf, data = test_depth_22
+)
+rf_w_22 <- predict(
+  ranger_rf_w, data = test_depth_22
+)
+
+pred_list <- list(gam_full_22, gam_bin_22, rf_22$predictions, rf_w_22$predictions)
+
+rmse_dat$rmse <- purrr::map(
+  pred_list, ~ Metrics::rmse(test_depth_22$rel_depth, .x)
+) %>% 
+  unlist()
+rmse_dat$bias <- purrr::map(
+  pred_list, ~ Metrics::bias(test_depth_22$rel_depth, .x)
+) %>% 
+  unlist()
+
+rmse_bar <- ggplot(
+  rmse_dat, aes(x = model, y = rmse, fill = model_family)
+) +
+  geom_bar(stat = "identity") +
+  ggsidekick::theme_sleek() +
+  labs(x = "Model", y = "RMSE") 
+
+bias_bar <- ggplot(
+  rmse_dat, aes(x = model, y = bias, fill = model_family)
+) +
+  geom_bar(stat = "identity") +
+  ggsidekick::theme_sleek() +
+  labs(x = "Model", y = "Bias") 
+
+png(here::here("figs", "model_comp", "rmse_bar.png"), units = "in",
+    height = 3.5, width = 4.5, res = 250)
+rmse_bar
+dev.off()
+
+png(here::here("figs", "model_comp", "bias_bar.png"), units = "in",
+    height = 3.5, width = 4.5, res = 250)
+bias_bar
+dev.off()
+
+
+
 # SPATIAL PREDICT --------------------------------------------------------------
 
 coast_utm <- rbind(rnaturalearth::ne_states( "United States of America", 
@@ -331,86 +505,87 @@ bath_grid <- bath_grid_in %>%
 
 
 # base template plot for maps
-base_plot <- ggplot() + 
+base_plot <- ggplot() +
   ggsidekick::theme_sleek() +
   theme(axis.title = element_blank()) +
   # set limitsto avoid boundary effects from UTM projection
   scale_x_continuous(
-    limits = c(210000, 560000), 
+    limits = c(210000, 560000),
     expand = c(0, 0)
   ) +
   scale_y_continuous(limits = c(5100000, 5470000), expand = c(0, 0))
 
 
 
-## first set are average spatial predictions (i.e. mean biological and temporal 
+## first set are average spatial predictions (i.e. mean biological and temporal
 ## attributes)
 
 # biological data
-bio_dat <- depth_dat_raw %>% 
-  select(vemco_code, fl, lipid, stage) %>% 
+bio_dat <- depth_dat_raw %>%
+  filter(med_stage %in% c(0, 1)) %>% 
+  select(vemco_code, fl, lipid, med_stage) %>%
   distinct()
 
 # stratify predictions by non-spatial covariates
-pred_dat1 <- bath_grid %>% 
+pred_dat1 <- bath_grid %>%
   mutate(
     fl = mean(bio_dat$fl),
     lipid = mean(bio_dat$lipid),
     day_night_dummy = 0.5,
-    stage_dummy = 0.5,
+    med_stage = 0.5,
     vemco_code = unique(depth_dat_raw$vemco_code)[1]
-  ) 
-
-pred_fit <- predict(fit3, type = "response", se.fit = TRUE, newdata = pred_dat1,
-                    #estimate population level, excluding RIs for tag
-                    exclude = "s(vemco_code)")
-
-pred_dat2 <- pred_dat1 %>%
-  mutate(
-    rel_pred_med = pred_fit$fit,
-    rel_pred_se = pred_fit$se.fit,
-    rel_pred_lo = rel_pred_med + (qnorm(0.025) * pred_fit$se.fit),
-    rel_pred_up = rel_pred_med + (qnorm(0.975) * pred_fit$se.fit),
-    pred_med = rel_pred_med * max_bathy,
-    pred_lo = rel_pred_lo * max_bathy,
-    pred_up = rel_pred_up * max_bathy,
-    utm_x_m = utm_x * 1000,
-    utm_y_m = utm_y * 1000,
-    pred_int_width = pred_up - pred_lo
-  ) 
-
-
-rel_depth <- base_plot +
-  geom_raster(data = pred_dat2 %>% filter(season == "summer"), 
-              aes(x = utm_x_m, y = utm_y_m, fill = rel_pred_med)) +
-  geom_sf(data = coast_utm) +
-  scale_fill_viridis_c(name = "Bathymetric\nDepth Ratio",
-                       direction = -1, 
-                       option = "A") +
-  theme(legend.position = "top",
-        axis.text = element_blank())
-
-mean_depth <- base_plot +
-  geom_raster(data = pred_dat2 %>% filter(season == "summer"), 
-              aes(x = utm_x_m, y = utm_y_m, fill = pred_med)) +
-  geom_sf(data = coast_utm) +
-  scale_fill_viridis_c(name = "Mean Depth (m)",
-                       direction = -1) +
-  theme(legend.position = "top",
-        axis.text = element_blank()) 
-
-var_depth <- base_plot +
-  geom_raster(data = pred_dat2 %>% filter(season == "summer"), 
-              aes(x = utm_x_m, y = utm_y_m, fill = rel_pred_se)) +
-  geom_sf(data = coast_utm) +
-  scale_fill_viridis_c(name = "Std. Error of Predictions", 
-                       option = "C",
-                       direction = -1)  +
-  theme(legend.position = "top",
-        axis.text = element_blank())
-
-avg_depth1 <- cowplot::plot_grid(plotlist = list(rel_depth, mean_depth),
-                                 ncol = 2)
+  )
+ 
+# pred_fit <- predict(fit3, type = "response", se.fit = TRUE, newdata = pred_dat1,
+#                     #estimate population level, excluding RIs for tag
+#                     exclude = "s(vemco_code)")
+# 
+# pred_dat2 <- pred_dat1 %>%
+#   mutate(
+#     rel_pred_med = pred_fit$fit,
+#     rel_pred_se = pred_fit$se.fit,
+#     rel_pred_lo = rel_pred_med + (qnorm(0.025) * pred_fit$se.fit),
+#     rel_pred_up = rel_pred_med + (qnorm(0.975) * pred_fit$se.fit),
+#     pred_med = rel_pred_med * max_bathy,
+#     pred_lo = rel_pred_lo * max_bathy,
+#     pred_up = rel_pred_up * max_bathy,
+#     utm_x_m = utm_x * 1000,
+#     utm_y_m = utm_y * 1000,
+#     pred_int_width = pred_up - pred_lo
+#   ) 
+# 
+# 
+# rel_depth <- base_plot +
+#   geom_raster(data = pred_dat2 %>% filter(season == "summer"), 
+#               aes(x = utm_x_m, y = utm_y_m, fill = rel_pred_med)) +
+#   geom_sf(data = coast_utm) +
+#   scale_fill_viridis_c(name = "Bathymetric\nDepth Ratio",
+#                        direction = -1, 
+#                        option = "A") +
+#   theme(legend.position = "top",
+#         axis.text = element_blank())
+# 
+# mean_depth <- base_plot +
+#   geom_raster(data = pred_dat2 %>% filter(season == "summer"), 
+#               aes(x = utm_x_m, y = utm_y_m, fill = pred_med)) +
+#   geom_sf(data = coast_utm) +
+#   scale_fill_viridis_c(name = "Mean Depth (m)",
+#                        direction = -1) +
+#   theme(legend.position = "top",
+#         axis.text = element_blank()) 
+# 
+# var_depth <- base_plot +
+#   geom_raster(data = pred_dat2 %>% filter(season == "summer"), 
+#               aes(x = utm_x_m, y = utm_y_m, fill = rel_pred_se)) +
+#   geom_sf(data = coast_utm) +
+#   scale_fill_viridis_c(name = "Std. Error of Predictions", 
+#                        option = "C",
+#                        direction = -1)  +
+#   theme(legend.position = "top",
+#         axis.text = element_blank())
+# 
+# avg_depth1 <- cowplot::plot_grid(plotlist = list(rel_depth, mean_depth),
+#                                  ncol = 2)
 
 
 ## LATENT SPATIAL PROCESS ------------------------------------------------------
@@ -431,54 +606,73 @@ pred_latent <- pred_dat1 %>%
     thermo_depth = mean(thermo_depth)
   )
 
-pred_latent_gam <- predict(
-  fit3, type = "response", se.fit = TRUE, newdata = pred_latent,
+pred_latent_gam_full <- predict(
+  fit_full, type = "response", se.fit = TRUE, newdata = pred_latent,
   #estimate population level, excluding RIs for tag
   exclude = "s(vemco_code)"
 )
+pred_latent_gam_bin <- predict(
+  fit_sub, type = "response", se.fit = TRUE, newdata = pred_latent,
+  #estimate population level, excluding RIs for tag
+  exclude = "s(vemco_code)"
+)
+pred_latent_rf <- predict(
+  ranger_rf, data = pred_latent
+)
+pred_latent_rf_w <- predict(
+  ranger_rf_w, data = pred_latent
+)
 
-pred_latent2 <- pred_latent %>%
+
+pred_latent2 <- pred_latent %>% 
   mutate(
-    rel_pred_med = pred_latent_gam$fit %>% as.numeric(),
-    rel_pred_se = pred_latent_gam$se.fit %>% as.numeric(),
-    rel_pred_lo = rel_pred_med + (qnorm(0.025) * rel_pred_se),
-    rel_pred_up = rel_pred_med + (qnorm(0.975) * rel_pred_se),
+    gam = pred_latent_gam_full$fit %>% as.numeric(),
+    gam_bin = pred_latent_gam_bin$fit %>% as.numeric(),
+    rf = pred_latent_rf$predictions,
+    rf_w = pred_latent_rf_w$predictions,
     utm_x_m = utm_x * 1000,
     utm_y_m = utm_y * 1000
-  ) 
+  ) %>% 
+  pivot_longer(., cols = c(gam, gam_bin, rf, rf_w), names_to = "model",
+               values_to = "med_pred") 
+
+ggplot(pred_latent2, aes(x = utm_x, y = med_pred)) +
+  geom_line(aes(colour = model))
 
 # plot that is added to counterfac panel below
 rel_latent <- base_plot +
   geom_raster(data = pred_latent2, 
-              aes(x = utm_x_m, y = utm_y_m, fill = rel_pred_med)) +
+              aes(x = utm_x_m, y = utm_y_m, fill = med_pred)) +
   geom_sf(data = coast_utm) +
   scale_fill_viridis_c(name = "Predicted\nBathymetric\nDepth Ratio",
                        direction = -1, 
                        option = "A") +
-  geom_text(aes(x = -Inf, y = Inf, label = "f)"), hjust = -0.5, vjust = 1.5) +
-  theme(legend.position = c(0.15, 0.27),#"left",
-        legend.key.size = unit(0.75, 'cm'),
-        axis.text = element_blank(),
-        legend.title = element_blank())
+  # geom_text(aes(x = -Inf, y = Inf, label = "f)"), hjust = -0.5, vjust = 1.5) +
+  # theme(legend.position = c(0.15, 0.27),#"left",
+  #       legend.key.size = unit(0.75, 'cm'),
+  #       axis.text = element_blank(),
+  #       legend.title = element_blank()) +
+  facet_wrap(~ model)
 
 
 ## CONDITIONAL PREDICTIONS -----------------------------------------------------
 
 stage_dat <- depth_dat_raw %>% 
-  select(vemco_code, fl, lipid, stage) %>% 
+  select(vemco_code, fl, lipid, med_stage) %>% 
+  filter(med_stage %in% c(0, 1)) %>% 
   distinct() %>% 
-  group_by(stage) %>% 
+  group_by(med_stage) %>% 
   dplyr::summarize(
     fl = mean(fl),
     lipid = mean(lipid)
   ) %>% 
-  mutate(stage_dummy = ifelse(stage == "mature", 1, 0)) %>% 
+  mutate(stage = ifelse(med_stage == "1", "mature", "immature")) %>% 
   rbind(., 
         data.frame(
-          stage = "average",
-          fl = mean(depth_dat_raw$fl),
-          lipid = mean(depth_dat_raw$lipid),
-          stage_dummy = 0.5
+          med_stage = 0.5,
+          fl = mean(bio_dat$fl),
+          lipid = mean(bio_dat$lipid),
+          stage = "average"
         ))
 
 new_dat <- data.frame(
@@ -499,7 +693,7 @@ new_dat <- data.frame(
   roms_temp = median(train_depth$roms_temp),
   moon_illuminated = median(train_depth$moon_illuminated),
   day_night_dummy = 0.5,
-  stage_dummy = 0.5,
+  med_stage = 0.5,
   vemco_code = unique(depth_dat_raw$vemco_code)[1]
 ) %>% 
   mutate(
@@ -515,7 +709,7 @@ new_dat <- data.frame(
 gen_pred_dat <- function(var_in) {
   # necessary to deal with string input
   varname <- ensym(var_in)
-  group_vals <- depth_dat %>% 
+  group_vals <- train_depth %>% 
     dplyr::summarize(min_v = min(!!varname),
                      max_v = max(!!varname))
   # change to dataframe
@@ -529,7 +723,11 @@ gen_pred_dat <- function(var_in) {
   new_dat %>% 
     select(- {{ var_in }}) %>% 
     mutate(dum = var_seq2) %>% 
-    dplyr::rename(!!varname := dum) 
+    dplyr::rename(!!varname := dum) %>% 
+    mutate(
+      det_dayx = sin(2 * pi * local_day / 365),
+      det_dayy = cos(2 * pi * local_day / 365)
+    )
 }
 
 
@@ -554,19 +752,67 @@ pred_foo <- function(fit, preds_in, ...) {
     ) 
 }
 
+pp <- predict(
+  ranger_rf,
+  data = counterfac_tbl$pred_dat_in[[1]]
+)
+
+pred_foo_ranger <- function(fit, preds_in, ...) {
+  preds1 <- predict(
+    fit, 
+    data = preds_in,
+    ...
+  )
+  
+  if (is.null(preds1$se)) {
+    preds_out <- preds1$predictions
+    colnames(preds_out) <- c("lo", "med", "up")
+    dum <- cbind(preds_in, preds_out) %>% 
+      mutate(med = -1 * med)
+  }
+  if (!is.null(preds1$se)) {
+    preds_out <- cbind(
+      preds1$predictions,
+      preds1$se
+    ) 
+    colnames(preds_out) <- c("mean", "se")
+    dum <- cbind(preds_in, preds_out) %>%
+      mutate(
+        lo = mean + (qnorm(0.025) * se),
+        up = mean + (qnorm(0.975) * se), 
+        mean = -1 * mean
+      )
+  }
+  
+  dum %>%
+    mutate(
+      lo = -1 * lo, 
+      up = -1 * up
+    )
+}
+
 counterfac_tbl <- tibble(
-  var_in = c("mean_bathy", "fl", "utm_x", "utm_y",
-             "local_day", "lipid", "thermo_depth",
-             "roms_temp", "mean_slope",
-             "day_night_dummy", "stage_dummy"
+  var_in = c("mean_bathy", "utm_x", "utm_y", "local_day", "med_stage"
   )) %>%
   mutate(
     pred_dat_in = purrr::map(var_in,
                              gen_pred_dat),
-    preds_ci1 = purrr::map(pred_dat_in, ~ pred_foo(fit = fit1, preds_in = .x)),
-    preds_ci2 = purrr::map(pred_dat_in, ~ pred_foo(fit = fit2, preds_in = .x))#,
-    # preds_ci3 = purrr::map(pred_dat_in, ~ pred_foo(fit = fit3, preds_in = .x))
-  )
+    preds_gam_full = furrr::future_map(pred_dat_in, 
+                                ~ pred_foo(fit = fit_full, preds_in = .x)),
+    preds_gam_sub = furrr::future_map(pred_dat_in, 
+                                ~ pred_foo(fit = fit_sub, preds_in = .x)),
+    preds_rf = furrr::future_map(
+      pred_dat_in, 
+      ~ pred_foo_ranger(fit = ranger_rf, preds_in = .x, type = "se", 
+                        se.method = "infjack")
+      ),
+    preds_rf_w = furrr::future_map(
+      pred_dat_in, 
+      ~ pred_foo_ranger(fit = ranger_rf_w, preds_in = .x, type = "se", 
+                        se.method = "infjack")
+      )
+    )
+    
 
 
 plot_foo <- function (data, ...) {
@@ -583,20 +829,18 @@ plot_foo <- function (data, ...) {
       labels = c("0.2", "0.4", "0.6")#,
       # limits = c(-0.6, -0.1)
     ) +
-    coord_cartesian(ylim = c(-0.65, -0.1))
+    coord_cartesian(ylim = c(-0.65, -0.1)) 
 }
 
 
 
 bathy_cond <- counterfac_tbl %>% 
   filter(var_in == "mean_bathy") %>% 
-  pull(preds_ci2) %>% 
+  pull(preds_gam_sub) %>% 
   as.data.frame() %>% 
   plot_foo(data = .,
            x = "mean_bathy") +  
-  labs(x = "Mean Bottom\nDepth") +
-  geom_text(x = -Inf, y = Inf, label = "a)", hjust = -0.5, vjust = 1.5,
-            check_overlap = TRUE)
+  labs(x = "Mean Bottom\nDepth") 
 
 yday_cond <- counterfac_tbl %>% 
   filter(var_in == "local_day") %>% 

@@ -23,7 +23,12 @@ depth_dat_raw1 <- readRDS(
   mutate(
     date_time_hour = format(date_time_utm, format = "%Y-%m-%d %H"),
     day_night_dummy = ifelse(day_night == "night", 1, 0)
-  ) 
+  ) %>% 
+  group_by(vemco_code) %>% 
+  #weight based on number of observations
+  mutate(n_dets = n(),
+         wt = 1 / sqrt(n_dets)) %>% 
+  ungroup() 
 
 
 det_rates <- depth_dat_raw1 %>% 
@@ -131,7 +136,7 @@ det_rates %>%
   tally()
 
 
-## FIT -------------------------------------------------------------------------
+## FIT GAMS --------------------------------------------------------------------
 
 
 fit1 <- gam(
@@ -178,17 +183,71 @@ concurvity(fit2)
 
 fit_list <- list(fit1, fit2, fit3)
 saveRDS(fit_list, here::here("data", "model_fits", "gam_fits.rds"))
+saveRDS(fit1, here::here("data", "model_fits", "gam_fits_full.rds"))
+
+fit_list <- readRDS(here::here("data", "model_fits", "gam_fits.rds"))
 
 
-## CHECK RESIDUALS -------------------------------------------------------------
+## FIT RANGERS -----------------------------------------------------------------
+
 
 rf_list <- readRDS(here::here("data", "model_fits", "rf_model_comparison.rds"))
-
 rf_weighted_list <- readRDS(
   here::here("data", "model_fits", "rf_model_comparison_weighted.rds")
 )
 
-resids <- resid(fit2)
+
+train_depth_ml <- train_depth %>% 
+  rename(day_night_night = day_night_dummy) %>% 
+  select(rel_depth, 
+         rf_weighted_list)
+
+ranger_rf <- ranger::ranger(
+  depth ~ .,
+  data = train_depth_baked,
+  num.trees =  1500, #$rf_list$rel_depth$top_model$num.trees,
+  mtry = 7, #rf_list$rel_depth$top_model$mtry,
+  # keep.inbag = TRUE for quantile predictions
+  keep.inbag = TRUE,
+  quantreg = TRUE,
+  importance = "permutation",
+  splitrule = "extratrees"
+)
+
+ranger_rf_w <- ranger::ranger(
+  depth ~ .,
+  data = train_depth_baked,
+  num.trees =  2500,#rf_weighted_list$rel_depth$top_model$num.trees,
+  mtry = 9, #rf_weighted_list$rel_depth$top_model$mtry,
+  case.weights = train_depth$wt,
+  # keep.inbag = TRUE for quantile predictions
+  keep.inbag = TRUE,
+  quantreg = TRUE,
+  importance = "permutation",
+  splitrule = "extratrees"
+)
+
+## CHECK RESIDUALS -------------------------------------------------------------
+
+
+
+rf_w_fit <- rf_weighted_list$rel_depth
+
+resid_dat <- train_depth %>% 
+  mutate(
+    resid_gam = resid(fit1),
+    resid_rf = 
+  ) %>% 
+  arrange(
+    date_time_utm
+  ) %>% 
+  group_by(
+    vemco_code
+  ) %>% 
+  mutate(
+    mean_acf = acf(resids)$acf[2, 1, 1]
+  )
+
 
 # normal distributed
 hist(resids)
@@ -197,7 +256,7 @@ hist(resids)
 gam.check(fit2)
 
 # temporal autocorrelation
-acf(resids)
+dd <- acf(resid_dat$resids)
 
 train_depth$resid <- resids
 

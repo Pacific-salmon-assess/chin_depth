@@ -153,6 +153,28 @@ fit_sub <- gam(
   family = betar(link = "logit")
 )
 
+fit_full_trim <- gam(
+  rel_depth ~ te(utm_x, utm_y, bs=c("tp", "tp"), k=c(10, 10)) +
+    s(local_day, bs = "cc", k = 5) + 
+    s(med_stage, k = 4) +
+    day_night_dummy + 
+    s(vemco_code, bs = "re"),
+  data = train_depth,
+  knots = list(local_day = c(0, 365)),
+  family = betar(link = "logit")
+)
+
+fit_sub_trim <- gam(
+  mean_rel_depth ~ te(utm_x, utm_y, bs=c("tp", "tp"), k=c(10, 10)) +
+    s(local_day, bs = "cc", k = 5) + 
+    s(med_stage, k = 4) +
+    day_night_dummy + 
+    s(vemco_code, bs = "re"),
+  data = train_bin,
+  knots = list(local_day = c(0, 365)),
+  family = betar(link = "logit")
+)
+
 
 saveRDS(fit_sub, here::here("data", "model_fits", "gam_fits_sub.rds"))
 saveRDS(fit_full, here::here("data", "model_fits", "gam_fits_full.rds"))

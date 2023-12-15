@@ -170,14 +170,22 @@ fit_sub_trim <- gam(
     s(med_stage, k = 4) +
     day_night_dummy + 
     s(vemco_code, bs = "re"),
+  
   data = train_bin,
   knots = list(local_day = c(0, 365)),
   family = betar(link = "logit")
 )
 
+concurvity(fit_sub)
+concurvity(fit_sub_trim)
+concurvity(fit_full)
+concurvity(fit_full_trim)
+
 
 saveRDS(fit_sub, here::here("data", "model_fits", "gam_fits_sub.rds"))
 saveRDS(fit_full, here::here("data", "model_fits", "gam_fits_full.rds"))
+saveRDS(fit_sub_trim, here::here("data", "model_fits", "gam_fits_sub_trim.rds"))
+saveRDS(fit_full_trim, here::here("data", "model_fits", "gam_fits_full_trim.rds"))
 
 fit_full <- readRDS(here::here("data", "model_fits", "gam_fits_full.rds"))
 fit_list <- readRDS(here::here("data", "model_fits", "gam_fits.rds"))
@@ -525,23 +533,6 @@ bath_grid <- bath_grid_in %>%
   left_join(., roms_month_means, by = "season")
 
 
-
-# base template plot for maps
-base_plot <- ggplot() +
-  ggsidekick::theme_sleek() +
-  theme(axis.title = element_blank()) +
-  # set limitsto avoid boundary effects from UTM projection
-  scale_x_continuous(
-    limits = c(210000, 560000),
-    expand = c(0, 0)
-  ) +
-  scale_y_continuous(limits = c(5100000, 5470000), expand = c(0, 0))
-
-
-
-## first set are average spatial predictions (i.e. mean biological and temporal
-## attributes)
-
 # biological data
 bio_dat <- depth_dat_raw %>%
   filter(med_stage %in% c(0, 1)) %>% 
@@ -557,127 +548,6 @@ pred_dat1 <- bath_grid %>%
     med_stage = 0.5,
     vemco_code = unique(depth_dat_raw$vemco_code)[1]
   )
- 
-# pred_fit <- predict(fit3, type = "response", se.fit = TRUE, newdata = pred_dat1,
-#                     #estimate population level, excluding RIs for tag
-#                     exclude = "s(vemco_code)")
-# 
-# pred_dat2 <- pred_dat1 %>%
-#   mutate(
-#     rel_pred_med = pred_fit$fit,
-#     rel_pred_se = pred_fit$se.fit,
-#     rel_pred_lo = rel_pred_med + (qnorm(0.025) * pred_fit$se.fit),
-#     rel_pred_up = rel_pred_med + (qnorm(0.975) * pred_fit$se.fit),
-#     pred_med = rel_pred_med * max_bathy,
-#     pred_lo = rel_pred_lo * max_bathy,
-#     pred_up = rel_pred_up * max_bathy,
-#     utm_x_m = utm_x * 1000,
-#     utm_y_m = utm_y * 1000,
-#     pred_int_width = pred_up - pred_lo
-#   ) 
-# 
-# 
-# rel_depth <- base_plot +
-#   geom_raster(data = pred_dat2 %>% filter(season == "summer"), 
-#               aes(x = utm_x_m, y = utm_y_m, fill = rel_pred_med)) +
-#   geom_sf(data = coast_utm) +
-#   scale_fill_viridis_c(name = "Bathymetric\nDepth Ratio",
-#                        direction = -1, 
-#                        option = "A") +
-#   theme(legend.position = "top",
-#         axis.text = element_blank())
-# 
-# mean_depth <- base_plot +
-#   geom_raster(data = pred_dat2 %>% filter(season == "summer"), 
-#               aes(x = utm_x_m, y = utm_y_m, fill = pred_med)) +
-#   geom_sf(data = coast_utm) +
-#   scale_fill_viridis_c(name = "Mean Depth (m)",
-#                        direction = -1) +
-#   theme(legend.position = "top",
-#         axis.text = element_blank()) 
-# 
-# var_depth <- base_plot +
-#   geom_raster(data = pred_dat2 %>% filter(season == "summer"), 
-#               aes(x = utm_x_m, y = utm_y_m, fill = rel_pred_se)) +
-#   geom_sf(data = coast_utm) +
-#   scale_fill_viridis_c(name = "Std. Error of Predictions", 
-#                        option = "C",
-#                        direction = -1)  +
-#   theme(legend.position = "top",
-#         axis.text = element_blank())
-# 
-# avg_depth1 <- cowplot::plot_grid(plotlist = list(rel_depth, mean_depth),
-#                                  ncol = 2)
-
-
-## LATENT SPATIAL PROCESS ------------------------------------------------------
-
-# set non-coordinate spatial variables to mean values 
-pred_latent <- pred_dat1 %>% 
-  filter(season == "summer") %>% 
-  mutate(
-    mean_bathy = mean(mean_bathy),
-    mean_slope = mean(mean_slope),
-    shore_dist = mean(shore_dist),
-    oxygen = mean(oxygen),
-    roms_temp = mean(roms_temp),
-    u = mean(u),
-    v = mean(v),
-    w = mean(w),
-    zoo = mean(zoo),
-    thermo_depth = mean(thermo_depth)
-  )
-
-pred_latent_gam_full <- predict(
-  fit_full, type = "response", se.fit = TRUE, newdata = pred_latent,
-  #estimate population level, excluding RIs for tag
-  exclude = "s(vemco_code)"
-)
-pred_latent_gam_bin <- predict(
-  fit_sub, type = "response", se.fit = TRUE, newdata = pred_latent,
-  #estimate population level, excluding RIs for tag
-  exclude = "s(vemco_code)"
-)
-pred_latent_rf <- predict(
-  ranger_rf, data = pred_latent
-)
-pred_latent_rf_w <- predict(
-  ranger_rf_w, data = pred_latent
-)
-
-
-pred_latent2 <- pred_latent %>% 
-  mutate(
-    gam = pred_latent_gam_full$fit %>% as.numeric(),
-    gam_bin = pred_latent_gam_bin$fit %>% as.numeric(),
-    rf = pred_latent_rf$predictions,
-    rf_w = pred_latent_rf_w$predictions,
-    utm_x_m = utm_x * 1000,
-    utm_y_m = utm_y * 1000
-  ) %>% 
-  pivot_longer(., cols = c(gam, gam_bin, rf, rf_w), names_to = "model",
-               values_to = "med_pred") 
-
-ggplot(pred_latent2, aes(x = utm_x, y = med_pred)) +
-  geom_line(aes(colour = model))
-
-# plot that is added to counterfac panel below
-rel_latent <- base_plot +
-  geom_raster(data = pred_latent2, 
-              aes(x = utm_x_m, y = utm_y_m, fill = med_pred)) +
-  geom_sf(data = coast_utm) +
-  scale_fill_viridis_c(name = "Predicted\nBathymetric\nDepth Ratio",
-                       direction = -1, 
-                       option = "A") +
-  # geom_text(aes(x = -Inf, y = Inf, label = "f)"), hjust = -0.5, vjust = 1.5) +
-  # theme(legend.position = c(0.15, 0.27),#"left",
-  #       legend.key.size = unit(0.75, 'cm'),
-  #       axis.text = element_blank(),
-  #       legend.title = element_blank()) +
-  facet_wrap(~ model)
-
-
-## CONDITIONAL PREDICTIONS -----------------------------------------------------
 
 stage_dat <- depth_dat_raw %>% 
   select(vemco_code, fl, lipid, med_stage) %>% 
@@ -834,8 +704,25 @@ counterfac_tbl <- tibble(
                         se.method = "infjack")
       )
     )
-    
 
+saveRDS(counterfac_tbl,
+        here::here("data", "model_fits", "supplementary_counterfac_preds.rds"))
+
+  
+bind_foo <- function (cov_in) {
+  dum <- counterfac_tbl %>% filter(var_in == {{ cov_in }})
+  gam_full_dat <- dum$preds_gam_full[[1]] %>% mutate(model = "gam")
+  gam_bin_dat <- dum$preds_gam_sub[[1]] %>% mutate(model = "gam_bin")
+  rf_dat <- dum$preds_rf[[1]] %>% mutate(model = "rf")
+  rf_w_dat <- dum$preds_rf_w[[1]] %>% mutate(model = "rf_w")
+  
+  out1 <- rbind(gam_full_dat, gam_bin_dat) %>% 
+    select(model, {{ cov_in }}, mean, lo, up) 
+  out2 <- rbind(rf_dat, rf_w_dat) %>% 
+    select(model, {{ cov_in }}, mean, lo, up) 
+  
+  rbind(out1, out2)
+}
 
 plot_foo <- function (data, ...) {
   ggplot(data, mapping = aes(!!!ensyms(...))) +
@@ -845,141 +732,46 @@ plot_foo <- function (data, ...) {
     scale_x_continuous(expand = c(0, 0))+
     theme(
       axis.title.y = element_blank()
-    )  +
-    scale_y_continuous(
-      breaks = c(-0.2, -0.4, -0.6),
-      labels = c("0.2", "0.4", "0.6")#,
-      # limits = c(-0.6, -0.1)
-    ) +
-    coord_cartesian(ylim = c(-0.65, -0.1)) 
+    ) 
 }
 
 
+png(here::here("figs", "model_comp", "bathy_cf_pred.png"), units = "in",
+    height = 4.5, width = 4.5, res = 250)
+bind_foo("mean_bathy") %>% 
+  plot_foo(data = ., x = "mean_bathy") +  
+  labs(x = "Mean Bottom Depth") +
+  facet_wrap(~ model)
+dev.off()
 
-bathy_cond <- counterfac_tbl %>% 
-  filter(var_in == "mean_bathy") %>% 
-  pull(preds_gam_sub) %>% 
-  as.data.frame() %>% 
-  plot_foo(data = .,
-           x = "mean_bathy") +  
-  labs(x = "Mean Bottom\nDepth") 
+png(here::here("figs", "model_comp", "day_cf_pred.png"), units = "in",
+    height = 4.5, width = 4.5, res = 250)
+bind_foo("local_day") %>% 
+  plot_foo(data = ., x = "local_day") +  
+  labs(x = "Day of Year") +
+  facet_wrap(~ model)
+dev.off()
 
-yday_cond <- counterfac_tbl %>% 
-  filter(var_in == "local_day") %>% 
-  pull(preds_ci2) %>% 
-  as.data.frame() %>% 
-  plot_foo(data = .,
-           x = "local_day") +  
-  labs(x = "Year\nDay") +
-  geom_text(x = -Inf, y = Inf, label = "c)", hjust = -0.5, vjust = 1.5,
-            check_overlap = TRUE)
+png(here::here("figs", "model_comp", "utmx_cf_pred.png"), units = "in",
+    height = 4.5, width = 4.5, res = 250)
+bind_foo("utm_x") %>% 
+  plot_foo(data = ., x = "utm_x") +  
+  labs(x = "Easting") +
+  facet_wrap(~ model)
+dev.off()
 
+png(here::here("figs", "model_comp", "utmy_cf_pred.png"), units = "in",
+    height = 4.5, width = 4.5, res = 250)
+bind_foo("utm_y") %>% 
+  plot_foo(data = ., x = "utm_y") +  
+  labs(x = "Northing") +
+  facet_wrap(~ model)
+dev.off()
 
-slope_cond <- counterfac_tbl %>% 
-  filter(var_in == "mean_slope") %>% 
-  pull(preds_ci2) %>% 
-  as.data.frame() %>% 
-  plot_foo(data = .,
-           x = "mean_slope") +  
-  labs(x = "Mean\nSlope") +
-  geom_text(x = -Inf, y = Inf, label = "b)", hjust = -0.5, vjust = 1.5,
-            check_overlap = TRUE)
-
-
-# maturity predictions
-mat_pred_in <- rbind(
-  new_dat %>% 
-    mutate(
-      stage_dummy = 0
-    ),
-  new_dat %>% 
-    mutate(
-      stage_dummy = 1
-    )
-) %>%
-  # replace size and lipid with stage-specific averages
-  select(-fl, -lipid) %>% 
-  left_join(., stage_dat, by = "stage_dummy") %>% 
-  distinct()
-
-mat_preds <- pred_foo(fit = fit2, preds_in = mat_pred_in)
-
-mat_cond <- mat_preds %>% 
-  mutate(
-    stage_f = factor(stage_dummy, levels = c(0, 1), 
-                     labels = c("immature", "mature"))
-  ) %>% 
-  ggplot(.) +
-  geom_pointrange(
-    aes(x = stage_f, y = mean, ymin = lo, ymax = up)) +
-  labs(x = "Maturity Stage +\nLength + Lipid") +
-  ggsidekick::theme_sleek() +
-  geom_text(aes(x = -Inf, y = Inf, label = "d)"), hjust = -0.5, vjust = 1.5,
-            check_overlap = TRUE) +
-  theme(
-    axis.title.y = element_blank()
-  ) +
-  scale_y_continuous(breaks = c(-0.2, -0.4, -0.6),
-                     labels = c("0.2", "0.4", "0.6"),
-                     limits = c(-0.65, -0.15)
-  )
-
-
-# day-night predictions
-dn_pred_in <- rbind(
-  new_dat %>% 
-    mutate(
-      day_night_dummy = 0
-    ),
-  new_dat %>% 
-    mutate(
-      day_night_dummy = 1
-    )
-) %>% 
-  distinct()
-dn_preds <- pred_foo(fit = fit2, preds_in = dn_pred_in)
-
-dn_cond <- dn_preds %>% 
-  mutate(
-    dn_f = factor(day_night_dummy, levels = c(0, 1), 
-                  labels = c("day", "night"))
-  ) %>% 
-  ggplot(.) +
-  geom_pointrange(
-    aes(x = dn_f, y = mean, ymin = lo, ymax = up)) +
-  labs(x = "Diel\nCycle") +
-  ggsidekick::theme_sleek() +
-  geom_text(x = -Inf, y = Inf, label = "e)", hjust = -0.5, vjust = 1.5,
-            check_overlap = TRUE) +
-  theme(
-    axis.title.y = element_blank()
-  ) +
-  scale_y_continuous(breaks = c(-0.2, -0.4, -0.6),
-                     labels = c("0.2", "0.4", "0.6"),
-                     limits = c(-0.65, -0.15)
-  )
-
-
-panel1 <- cowplot::plot_grid(
-  bathy_cond,
-  slope_cond,
-  yday_cond,
-  nrow = 1
-)
-panel2 <- cowplot::plot_grid(
-  mat_cond,
-  dn_cond,
-  ncol = 1
-)
-panel3 <- cowplot::plot_grid(
-  panel2,
-  rel_latent,
-  ncol = 2,
-  rel_widths = c(0.75, 1.5)
-)
-pp <- cowplot::plot_grid(
-  panel1,
-  panel3,
-  nrow = 2,
-  rel_heights = c(0.5, 1)
-) 
+png(here::here("figs", "model_comp", "stage_cf_pred.png"), units = "in",
+    height = 4.5, width = 4.5, res = 250)
+bind_foo("med_stage") %>% 
+  plot_foo(data = ., x = "med_stage") +  
+  labs(x = "Maturity Stage") +
+  facet_wrap(~ model)
+dev.off()

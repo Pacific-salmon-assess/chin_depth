@@ -732,7 +732,8 @@ plot_foo <- function (data, ...) {
     scale_x_continuous(expand = c(0, 0))+
     theme(
       axis.title.y = element_blank()
-    ) 
+    ) +
+    coord_cartesian(ylim = c(-1, -0))
 }
 
 

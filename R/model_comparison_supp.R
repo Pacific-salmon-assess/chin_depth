@@ -13,6 +13,7 @@ library(DALEX)
 library(DALEXtra)
 library(randomForest)
 library(mgcv)
+library(ape)
 
 
 # parallelize based on operating system
@@ -41,6 +42,7 @@ depth_dat_raw1 <- readRDS(
   #weight based on number of observations
   mutate(n_dets = n(),
          wt = 1 / sqrt(n_dets),
+         wt2 = 1 / n_dets,
          # add time steps
          start_time = min(date_time_utm),
          end_time = max(date_time_utm),
@@ -188,59 +190,38 @@ saveRDS(fit_sub_trim, here::here("data", "model_fits", "gam_fits_sub_trim.rds"))
 saveRDS(fit_full_trim, here::here("data", "model_fits", "gam_fits_full_trim.rds"))
 
 fit_full <- readRDS(here::here("data", "model_fits", "gam_fits_full.rds"))
-fit_list <- readRDS(here::here("data", "model_fits", "gam_fits.rds"))
+fit_sub <- readRDS(here::here("data", "model_fits", "gam_fits_sub.rds"))
 
 
 ## GAM CONVERGENCE -------------------------------------------------------------
 
+hist(resid(fit_full))
+hist(resid(fit_sub))
 
-# normal distributed
-hist(resids)
+# DOESN'T WORK FOR BETA
 
-# qqplots
-gam.check(fit2)
-
-# temporal autocorrelation
-dd <- acf(resid_dat$resids)
-
-train_depth$resid <- resids
-
-# look at 9 tags w/ most detections and plot temporal patterns in residuals
-tt <- train_depth %>% 
-  group_by(vemco_code) %>% 
-  mutate(nn = n()) %>% 
-  arrange(-nn) %>% 
-  pull(vemco_code) %>% 
-  unique()
-
-ggplot(train_depth %>% 
-         filter(vemco_code %in% tt[1:9])) + 
-  geom_point(aes(x = local_day, y = resid)) +
-  facet_wrap(~vemco_code, scales = "free") +
-  ggsidekick::theme_sleek()
-
-
-#
-sims_list <- purrr::map(
-  fit_list, 
-  ~ simulate(.x, newdata = train_depth, nsim = 50)
-)
-fixed_pred_list <- purrr::map(
-  fit_list, 
-  ~ predict(.x, type = "response")
-)
-qq_list <- purrr::pmap(
-  list(sims_list, fixed_pred_list), 
-  function(y, z) {
-    dharma_res <- DHARMa::createDHARMa(
-      simulatedResponse = y,
-      observedResponse = train_depth$mean_rel_depth,
-      fittedPredictedResponse = z
-    )
-    plot(dharma_res)
-  }
-)
-# looks good
+# fit_list <- list(fit_full, fit_sub)
+# 
+# sims_list <- purrr::map2(
+#   fit_list, list(train_depth, train_bin),
+#   ~ simulate(.x, data = .y, nsim = 50)
+# )
+# fixed_pred_list <- purrr::map(
+#   fit_list, 
+#   ~ predict(.x, type = "response")
+# )
+# qq_list <- purrr::pmap(
+#   list(sims_list, fixed_pred_list), 
+#   function(y, z) {
+#     dharma_res <- DHARMa::createDHARMa(
+#       simulatedResponse = y,
+#       observedResponse = train_depth$mean_rel_depth,
+#       fittedPredictedResponse = z
+#     )
+#     plot(dharma_res)
+#   }
+# )
+# # looks good
 
 
 ## FIT RANGERS -----------------------------------------------------------------
@@ -276,8 +257,28 @@ ranger_rf_w <- ranger::ranger(
   splitrule = "extratrees"
 )
 
+ranger_rf_w2 <- ranger::ranger(
+  rel_depth ~ .,
+  data = train_depth_ml,
+  num.trees =  2500,#rf_weighted_list$rel_depth$top_model$num.trees,
+  mtry = 11, #rf_weighted_list$rel_depth$top_model$mtry,
+  case.weights = train_depth$wt2,
+  # keep.inbag = TRUE for quantile predictions
+  keep.inbag = TRUE,
+  # quantreg = TRUE,
+  importance = "permutation",
+  splitrule = "extratrees"
+)
+
+ranger_list <- list(ranger_rf,
+                    ranger_rf_w,
+                    ranger_rf_w2)
+saveRDS(ranger_list, here::here("data", "model_fits", "supp_ranger_fits.rds"))
+
+
 rf_preds <- predict(ranger_rf, data = train_depth_ml)
 rf_w_preds <- predict(ranger_rf_w, data = train_depth_ml)
+rf_w2_preds <- predict(ranger_rf_w2, data = train_depth_ml)
 
 
 ## CHECK AUTOCORRELATION -------------------------------------------------------
@@ -293,12 +294,12 @@ resid_dat <- train_depth %>%
   mutate(
     resid_gam = p_resid(gam_preds, rel_depth),
     resid_rf = p_resid(rf_preds$predictions, rel_depth),
-    resid_rf_w = p_resid(rf_w_preds$predictions, rel_depth)
+    resid_rf_w = p_resid(rf_w_preds$predictions, rel_depth),
+    resid_rf_w2 = p_resid(rf_w2_preds$predictions, rel_depth)
   ) %>% 
   arrange(
     date_time_utm
   )
-
 
 
 ## temporal autocorrelation
@@ -351,7 +352,8 @@ ar1_est <- resid_ts %>%
   summarize(
     gam = acf(resid_gam, plot = FALSE, na.action = na.pass)$acf[2, 1, 1],
     rf = acf(resid_rf, plot = FALSE, na.action = na.pass)$acf[2, 1, 1],
-    rf_w = acf(resid_rf_w, plot = FALSE, na.action = na.pass)$acf[2, 1, 1]
+    rf_w = acf(resid_rf_w, plot = FALSE, na.action = na.pass)$acf[2, 1, 1],
+    rf_w2 = acf(resid_rf_w2, plot = FALSE, na.action = na.pass)$acf[2, 1, 1]
   ) 
 ar1_est_bin <- resid_ts_bin %>% 
   bind_rows() %>% 
@@ -363,7 +365,8 @@ ar1_est_bin <- resid_ts_bin %>%
   mutate(model = "gam_bin")
 
 ar1_est2 <- ar1_est %>% 
-  pivot_longer(cols = c(gam, rf, rf_w), names_to = "model", values_to = "ar1") %>% 
+  pivot_longer(cols = c(gam, rf, rf_w, rf_w2),
+               names_to = "model", values_to = "ar1") %>% 
   rbind(., ar1_est_bin) %>% 
   mutate(
     model_family = ifelse(grepl("gam", model), "gam", "random_forest")
@@ -393,48 +396,14 @@ ar1_est2 %>%
 
 
 
-## spatial autocorrelation
-resid_long <- resid_dat %>% 
-  select(utm_x, utm_y, starts_with("resid")) %>% 
-  pivot_longer(cols = starts_with("resid"), names_to = "model", 
-               values_to = "resid", names_prefix = "resid_") 
-resid_long_bin <- train_bin %>% 
-  select(utm_x, utm_y, resid = resid_gam_bin) %>% 
-  mutate(model = "gam_bin")
-
-resid_long2 <- rbind(resid_long, resid_long_bin) %>% 
-  mutate(
-    model_family = ifelse(grepl("gam", model), "gam", "random_forest")
-  ) 
-  
-spatial_corr_x <- ggplot(
-  resid_long2, aes(x = utm_x, y = resid, fill = model_family)
-) +
-  geom_point(shape = 21, alpha = 0.3) +
-  ggsidekick::theme_sleek() +
-  geom_smooth(method = lm, level = 0.95) +
-  labs(x = "Easting", y = "Pearson Residual") +
-  facet_wrap(~model)
-
-png(here::here("figs", "model_comp", "sp_cor_plot_x.png"), units = "in",
-    height = 3.5, width = 4.5, res = 250)
-spatial_corr_x
-dev.off()
-
-
-spatial_corr_y <- ggplot(
-  resid_long2, aes(x = utm_y, y = resid, fill = model_family)
-) +
-  geom_point(shape = 21, alpha = 0.3) +
-  ggsidekick::theme_sleek() +
-  geom_smooth(method = lm, level = 0.95) +
-  labs(x = "Northing", y = "Pearson Residual") +
-  facet_wrap(~model)
-
-png(here::here("figs", "model_comp", "sp_cor_plot_y.png"), units = "in",
-    height = 3.5, width = 4.5, res = 250)
-spatial_corr_y
-dev.off()
+# spatial autocorrelation estimates
+resid_list <- list(resid_dat$resid_gam, resid_dat$resid_rf, 
+                   resid_dat$resid_rf_w, resid_dat$resid_rf_w2)
+moran_full <- purrr::map(
+  resid_list, ~ moranfast::moranfast(.x, resid_dat$utm_x, resid_dat$utm_y)
+)
+moran_bin <- moranfast::moranfast(train_bin$resid_gam_bin, train_bin$utm_x, 
+                                  train_bin$utm_y)
 
 
 ## OUT OF SAMPLE PREDS ---------------------------------------------------------
@@ -464,8 +433,12 @@ rf_22 <- predict(
 rf_w_22 <- predict(
   ranger_rf_w, data = test_depth_22
 )
+rf_w2_22 <- predict(
+  ranger_rf_w2, data = test_depth_22
+)
 
-pred_list <- list(gam_full_22, gam_bin_22, rf_22$predictions, rf_w_22$predictions)
+pred_list <- list(gam_full_22, gam_bin_22, rf_22$predictions, 
+                  rf_w_22$predictions, rf_w2_22$predictions)
 
 rmse_dat$rmse <- purrr::map(
   pred_list, ~ Metrics::rmse(test_depth_22$rel_depth, .x)
@@ -601,9 +574,15 @@ new_dat <- data.frame(
 gen_pred_dat <- function(var_in) {
   # necessary to deal with string input
   varname <- ensym(var_in)
-  group_vals <- train_depth %>% 
-    dplyr::summarize(min_v = min(!!varname),
-                     max_v = max(!!varname))
+  if (grepl("utm", var_in)) {
+    group_vals <- bath_grid %>% 
+      dplyr::summarize(min_v = min(!!varname),
+                       max_v = max(!!varname))
+  } else {
+    group_vals <- train_depth %>% 
+      dplyr::summarize(min_v = min(!!varname),
+                       max_v = max(!!varname))
+  }
   # change to dataframe
   var_seq <- NULL
   for (i in 1:nrow(group_vals)) {
@@ -644,10 +623,6 @@ pred_foo <- function(fit, preds_in, ...) {
     ) 
 }
 
-pp <- predict(
-  ranger_rf,
-  data = counterfac_tbl$pred_dat_in[[1]]
-)
 
 pred_foo_ranger <- function(fit, preds_in, ...) {
   preds1 <- predict(
@@ -692,18 +667,22 @@ counterfac_tbl <- tibble(
     preds_gam_full = furrr::future_map(pred_dat_in, 
                                 ~ pred_foo(fit = fit_full, preds_in = .x)),
     preds_gam_sub = furrr::future_map(pred_dat_in, 
-                                ~ pred_foo(fit = fit_sub, preds_in = .x)),
-    preds_rf = furrr::future_map(
-      pred_dat_in, 
-      ~ pred_foo_ranger(fit = ranger_rf, preds_in = .x, type = "se", 
-                        se.method = "infjack")
-      ),
-    preds_rf_w = furrr::future_map(
-      pred_dat_in, 
-      ~ pred_foo_ranger(fit = ranger_rf_w, preds_in = .x, type = "se", 
-                        se.method = "infjack")
-      )
-    )
+                                ~ pred_foo(fit = fit_sub, preds_in = .x)))
+counterfac_tbl$preds_rf <- purrr::map(
+  counterfac_tbl$pred_dat_in, 
+  ~ pred_foo_ranger(fit = ranger_rf, preds_in = .x, type = "se", 
+                    se.method = "infjack")
+)
+counterfac_tbl$preds_rf_w <- purrr::map(
+  counterfac_tbl$pred_dat_in, 
+  ~ pred_foo_ranger(fit = ranger_rf_w, preds_in = .x, type = "se", 
+                    se.method = "infjack")
+)
+counterfac_tbl$preds_rf_w2 <- purrr::map(
+  counterfac_tbl$pred_dat_in, 
+  ~ pred_foo_ranger(fit = ranger_rf_w2, preds_in = .x, type = "se", 
+                    se.method = "infjack")
+)
 
 saveRDS(counterfac_tbl,
         here::here("data", "model_fits", "supplementary_counterfac_preds.rds"))
@@ -715,19 +694,23 @@ bind_foo <- function (cov_in) {
   gam_bin_dat <- dum$preds_gam_sub[[1]] %>% mutate(model = "gam_bin")
   rf_dat <- dum$preds_rf[[1]] %>% mutate(model = "rf")
   rf_w_dat <- dum$preds_rf_w[[1]] %>% mutate(model = "rf_w")
+  rf_w2_dat <- dum$preds_rf_w2[[1]] %>% mutate(model = "rf_w2")
   
   out1 <- rbind(gam_full_dat, gam_bin_dat) %>% 
-    select(model, {{ cov_in }}, mean, lo, up) 
-  out2 <- rbind(rf_dat, rf_w_dat) %>% 
-    select(model, {{ cov_in }}, mean, lo, up) 
+    select(model, {{ cov_in }}, mean, lo, up) %>% 
+    mutate(model_family = "gam")
+  out2 <- list(rf_dat, rf_w_dat, rf_w2_dat) %>%
+    bind_rows() %>% 
+    select(model, {{ cov_in }}, mean, lo, up) %>% 
+    mutate(model_family = "random_forest")
   
   rbind(out1, out2)
 }
 
 plot_foo <- function (data, ...) {
   ggplot(data, mapping = aes(!!!ensyms(...))) +
-    geom_line(aes(y = mean)) +
-    geom_ribbon(aes(ymin = lo, ymax = up), alpha = 0.4) +
+    geom_line(aes(y = mean, colour = model_family)) +
+    geom_ribbon(aes(ymin = lo, ymax = up, fill = model_family), alpha = 0.4) +
     ggsidekick::theme_sleek() +
     scale_x_continuous(expand = c(0, 0))+
     theme(
@@ -738,41 +721,46 @@ plot_foo <- function (data, ...) {
 
 
 png(here::here("figs", "model_comp", "bathy_cf_pred.png"), units = "in",
-    height = 4.5, width = 4.5, res = 250)
+    height = 2.5, width = 6, res = 250)
 bind_foo("mean_bathy") %>% 
   plot_foo(data = ., x = "mean_bathy") +  
   labs(x = "Mean Bottom Depth") +
-  facet_wrap(~ model)
+  facet_wrap(~ model, nrow = 1) +
+  theme(legend.position = "top")
 dev.off()
 
 png(here::here("figs", "model_comp", "day_cf_pred.png"), units = "in",
-    height = 4.5, width = 4.5, res = 250)
+    height = 2.5, width = 6, res = 250)
 bind_foo("local_day") %>% 
   plot_foo(data = ., x = "local_day") +  
   labs(x = "Day of Year") +
-  facet_wrap(~ model)
+  facet_wrap(~ model, nrow = 1) +
+  theme(legend.position = "top")
 dev.off()
 
 png(here::here("figs", "model_comp", "utmx_cf_pred.png"), units = "in",
-    height = 4.5, width = 4.5, res = 250)
+    height = 2.5, width = 6, res = 250)
 bind_foo("utm_x") %>% 
   plot_foo(data = ., x = "utm_x") +  
   labs(x = "Easting") +
-  facet_wrap(~ model)
+  facet_wrap(~ model, nrow = 1) +
+  theme(legend.position = "top")
 dev.off()
 
 png(here::here("figs", "model_comp", "utmy_cf_pred.png"), units = "in",
-    height = 4.5, width = 4.5, res = 250)
+    height = 2.5, width = 6, res = 250)
 bind_foo("utm_y") %>% 
   plot_foo(data = ., x = "utm_y") +  
   labs(x = "Northing") +
-  facet_wrap(~ model)
+  facet_wrap(~ model, nrow = 1) +
+  theme(legend.position = "top")
 dev.off()
 
 png(here::here("figs", "model_comp", "stage_cf_pred.png"), units = "in",
-    height = 4.5, width = 4.5, res = 250)
+    height = 2.5, width = 6, res = 250)
 bind_foo("med_stage") %>% 
   plot_foo(data = ., x = "med_stage") +  
   labs(x = "Maturity Stage") +
-  facet_wrap(~ model)
+  facet_wrap(~ model, nrow = 1) +
+  theme(legend.position = "top")
 dev.off()

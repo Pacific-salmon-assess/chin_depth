@@ -34,7 +34,8 @@ depth_dat_raw <- readRDS(
   group_by(vemco_code) %>% 
   #weight based on number of observations
   mutate(n_dets = n(),
-         wt = 1 / sqrt(n_dets)) %>% 
+         wt = 1 / sqrt(n_dets),
+         wt2 = 1 / n_dets) %>% 
   ungroup() %>% 
   filter(
     !grepl("2022", vemco_code)
@@ -59,12 +60,13 @@ depth_dat <- depth_dat_raw %>%
     det_dayx, det_dayy,
     max_bathy, mean_bathy, mean_slope, shore_dist,
     u, v, w, roms_temp, zoo, oxygen, thermo_depth, moon_illuminated,
-    ind_block, wt
+    ind_block, wt, wt2
   ) 
 
 # split by individual blocking
 train_depth <- depth_dat %>% filter(!ind_block == "5") %>% droplevels() 
 train_weights <- train_depth$wt
+train_weights2 <- train_depth$wt2
 test_depth <- depth_dat %>% filter(ind_block == "5") %>% droplevels() 
 
 
@@ -72,7 +74,7 @@ test_depth <- depth_dat %>% filter(ind_block == "5") %>% droplevels()
 
 ## create dataframe of models to compete
 model_tbl <- expand.grid(
-  model_type = c("gbm", "rf", "rf_weighted"),
+  model_type = c("gbm", "rf", "rf_weighted", "rf_weighted2"),
   response = c("logit_rel_depth", "rel_depth", "depth")
   ) %>% 
   as_tibble() 
@@ -152,11 +154,17 @@ fit_foo <- function(model, baked_train) {
                 top_model = fit$finalModel)
   }
   
-  if (model %in% c("rf_weighted", "rf")) {
+  if (model %in% c("rf_weighted", "rf", "rf_weighted2")) {
     # iterate over different number of trees
     fits <- vector(length = length(rf_grid$n.trees), mode = "list")
     names(fits) <- paste("trees_", rf_grid$n.trees, sep = "")
-    wts <- if (model == "rf_weighted") train_weights else NULL
+    wts <- if (model == "rf_weighted") { 
+      train_weights
+    } else if (model == "rf_weighted2") {
+        train_weights2
+    } else {
+        NULL
+      }
     for (i in seq_along(fits)) {
       fits[[i]] <- train(
         depth_var ~ .,
@@ -268,6 +276,20 @@ rf_weighted_list <- readRDS(
   here::here("data", "model_fits", "rf_model_comparison_weighted.rds")
   )
 
+rf_weighted2_tbl <- model_tbl %>% filter(model_type == "rf_weighted2")
+rf_weighted2_list <- future_pmap(
+  list("rf_weighted2",
+       rf_weighted2_tbl$baked_train),
+  .f = fit_foo,
+  .options = furrr_options(seed = TRUE)
+)
+names(rf_weighted2_list) <- rf_weighted2_tbl$response
+saveRDS(rf_weighted2_list,
+        here::here("data", "model_fits", "rf_model_comparison_weighted2.rds"))
+rf_weighted2_list <- readRDS(
+  here::here("data", "model_fits", "rf_model_comparison_weighted2.rds")
+)
+
 
 ## COMPARE MODEL STRUCTURES ----------------------------------------------------
 
@@ -308,15 +330,37 @@ top_rangers_weighted <- purrr::map2(
     }
   )
 
+rf_weighted2_train_list <- model_tbl %>% 
+  filter(model_type == "rf_weighted2") %>% 
+  pull(baked_train)
+top_rangers_weighted2 <- purrr::map2(
+  rf_weighted2_list, rf_weighted2_train_list, function (x, y) {
+    top_mod <- x$top_model
+    
+    ranger::ranger(
+      depth_var ~ .,
+      data = y,
+      case.weights = train_weights2,
+      num.trees = top_mod$param$num.trees,
+      mtry = top_mod$tuneValue$mtry,
+      splitrule = top_mod$splitrule
+    )
+  }
+)
+
 
 # add models to tbl
 gbm_tbl <- model_tbl %>% filter(model_type == "gbm")
 rf_tbl <- model_tbl %>% filter(model_type == "rf")
 rf_weighted_tbl <- model_tbl %>% filter(model_type == "rf_weighted")
+rf_weighted2_tbl <- model_tbl %>% filter(model_type == "rf_weighted2")
 rf_tbl$top_model <- top_rangers
 rf_weighted_tbl$top_model <- top_rangers_weighted
+rf_weighted2_tbl$top_model <- top_rangers_weighted2
 gbm_tbl$top_model <- map(gbm_list, function (x) x$top_model) 
-model_tbl <- list(gbm_tbl, rf_tbl, rf_weighted_tbl) %>% 
+model_tbl <- list(gbm_tbl, rf_tbl, 
+                  # rf_weighted_tbl
+                  rf_weighted2_tbl) %>% 
   bind_rows()
 
 # pp <- predict(top_rangers[[1]], data = rf_tbl$baked_train[[1]])

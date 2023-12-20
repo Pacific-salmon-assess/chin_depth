@@ -123,8 +123,7 @@ calc_lipid <- function(mean_energy) {
 # Import UBC data
 hendricks_bio <- readRDS(here::here("data", "hendricks_chin_dat.RDS")) %>% 
   mutate(
-    lipid = calc_lipid(exp(mean_log_e)),
-    med_stage = ifelse(stage == "mature", 1, 0)
+    lipid = calc_lipid(exp(mean_log_e))
   )
 
 depth_h <- readRDS(here::here("data", "hendricks_depth_dets.RDS")) %>% 
@@ -134,7 +133,7 @@ depth_h <- readRDS(here::here("data", "hendricks_depth_dets.RDS")) %>%
   ) %>% 
   left_join(., 
             hendricks_bio %>% 
-              select(vemco_code, med_stage, fl, lipid, cu_name, agg), 
+              select(vemco_code, fl, lipid, cu_name, agg), 
             by = "vemco_code") %>%
   select(colnames(depth_raw)) 
 
@@ -145,18 +144,7 @@ depth_dets1 <- rbind(depth_raw, depth_h) %>%
     hour = lubridate::hour(date_time) + 1,
     day = lubridate::day(date_time),
     month = lubridate::month(date_time),
-    year = lubridate::year(date_time),
-    agg = case_when(
-      grepl("East Vancouver Island", cu_name) ~ "ECVI",
-      grepl("Willamette", cu_name) ~ "LowCol",
-      grepl("Okanagan", cu_name) ~ "Col",
-      grepl("Upper Columbia", cu_name) ~ "Col",
-      grepl("_1.", cu_name) ~ "FraserYear",
-      grepl("Vancouver Island", cu_name) ~ "WCVI",
-      grepl("_0.", cu_name) | agg == "Fraser" ~ "FraserSub",
-      cu_name == "Lower Columbia River" ~ "LowCol",
-      TRUE ~ agg
-    )
+    year = lubridate::year(date_time)
   ) %>% 
   filter(!region == "fraser",
          !is.na(depth))
@@ -816,26 +804,30 @@ n_det_dat <- depth_dat2 %>%
 
 # calculate timespan overwhich detections provided (merge with depth_raw to 
 # include release data)
-n_day_dat <- rbind(
-  depth_raw %>% 
-    filter(receiver_name == "release") %>%
-    mutate(
-      date_time_local = lubridate::with_tz(
-        date_time, tzone = "America/Los_Angeles"
-      )                                 
-    ) %>% 
-    select(vemco_code, date_time_local),
-  depth_dat2 %>% 
-    select(vemco_code, date_time_local)
-) %>% 
+deployment_dates <- rbind(
+  chin_in %>% 
+    select(vemco_code = acoustic_year, release_date = deployment_time),
+  hendricks_bio %>% 
+    select(vemco_code, release_date = date)
+)
+n_day_dat <- depth_dat2 %>% 
+  select(vemco_code, date_time_local) %>% 
   group_by(vemco_code) %>% 
   summarize(
     min_time = min(date_time_local),
     max_time = max(date_time_local)
   ) %>% 
+  left_join(., 
+            deployment_dates,
+            by = "vemco_code") %>%
   mutate(
-    timespan = difftime(max_time, min_time, units = "days")
-  ) 
+    days_before_det = difftime(release_date, min_time, units = "days"),
+    days_at_large = difftime(release_date, max_time, units = "days")
+  )
+
+mean(n_day_dat$days_before_det)
+range(n_day_dat$days_before_det)
+
 
 det_hist <- ggplot(n_det_dat, aes(x = n)) +
   geom_histogram() + 

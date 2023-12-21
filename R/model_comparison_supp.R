@@ -235,8 +235,8 @@ train_depth_ml <- train_depth %>%
 ranger_rf <- ranger::ranger(
   rel_depth ~ .,
   data = train_depth_ml,
-  num.trees =  1500, #$rf_list$rel_depth$top_model$num.trees,
-  mtry = 7, #rf_list$rel_depth$top_model$mtry,
+  num.trees =  1000, #$rf_list$rel_depth$top_model$num.trees,
+  mtry = 17, #rf_list$rel_depth$top_model$mtry,
   # keep.inbag = TRUE for quantile predictions
   keep.inbag = TRUE,
   quantreg = TRUE,

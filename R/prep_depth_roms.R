@@ -529,7 +529,7 @@ depth_dat <- depth_dets1 %>%
     # redefine stage so that immature fish become mature May 1 of following
     # year
     med_stage = ifelse(
-      med_stage < 0.0001 & year > tag_year & local_day > 120,
+      med_stage < 0.1 & year > tag_year & local_day > 120,
       1,
       med_stage
     )

@@ -33,9 +33,11 @@ depth_dat_raw <- readRDS(
   # sample_n(., size = 5000) %>% 
   group_by(vemco_code) %>% 
   #weight based on number of observations
-  mutate(n_dets = n(),
-         wt = 1 / sqrt(n_dets),
-         wt2 = 1 / n_dets) %>% 
+  mutate(
+    n_dets = n(),
+    wt = 1 / sqrt(n_dets),
+    wt2 = 1 / n_dets
+  ) %>% 
   ungroup() %>% 
   filter(
     !grepl("2022", vemco_code)
@@ -195,42 +197,6 @@ fit_foo <- function(model, baked_train) {
 }
 
 
-# rf_tbl <- model_tbl %>% filter(model_type == "rf")
-# tt2 <- train(
-#   rf_tbl$recipe[[1]],
-#   # depth_var ~ .,
-#   data = rf_tbl$train_data[[1]] %>%
-#     dplyr::select(-ind_block, -max_bathy),
-#   method = "ranger", 
-#   trControl = trainControl(method = "cv", number = 5)#, #ctrl, 
-#   # na.action = na.pass
-#   )
-# 
-# tt <-  caret::train(
-#   depth_var ~ .,
-#   rf_tbl$train_data[[1]] %>% dplyr::select(-ind_block, -max_bathy, -day_night),
-#   method = "ranger", 
-#   # weights = train_weights,
-#   metric = "RMSE",
-#   maximize = FALSE,
-#   tuneLength = unique(rf_grid$tune_length),
-#   trControl = ctrl,
-#   num.trees = rf_grid$n.trees[1]
-# ) 
-# 
-# tt2 <-  train(
-#   # rf_tbl$recipe[[1]],
-#   depth_var ~ .,
-#   rf_tbl$train_data[[1]] %>% dplyr::select(-ind_block, -max_bathy, -day_night),
-#   method = "ranger", 
-#   weights = train_weights,
-#   metric = "RMSE",
-#   maximize = FALSE,
-#   tuneLength = unique(rf_grid$tune_length),
-#   trControl = ctrl,
-#   num.trees = rf_grid$n.trees[1]
-# ) 
-
 # set up parallel
 plan(multisession, workers = ncores)
 
@@ -251,7 +217,6 @@ gbm_list <- readRDS(
 
 rf_tbl <- model_tbl %>% filter(model_type == "rf")
 rf_list <- future_pmap(list("rf",
-                            # rf_tbl$recipe,
                             rf_tbl$baked_train),
                        .f = fit_foo,
                        .options = furrr_options(seed = TRUE))

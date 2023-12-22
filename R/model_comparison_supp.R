@@ -227,8 +227,8 @@ hist(resid(fit_sub))
 ## FIT RANGERS -----------------------------------------------------------------
 
 train_depth_ml <- train_depth %>% 
-  select(rel_depth, fl, lipid, med_stage, utm_y, utm_x, mean_bathy, mean_slope,
          shore_dist, u, v, w, roms_temp, zoo, oxygen, thermo_depth, det_dayx,
+  select(rel_depth, fl, lipid, med_stage, utm_y, utm_x, mean_bathy, mean_slope,
          det_dayy, moon_illuminated, day_night_dummy)
 
 # hyperpars based on top model from depth_caret_comparison_weighted.R

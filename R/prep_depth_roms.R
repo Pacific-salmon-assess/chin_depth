@@ -39,11 +39,14 @@ rec_full <- readRDS(here::here("data", "receivers_all.RDS"))
 rec <- rec_full$rec_all 
 
 
-# initial life stage estimates (includes unknowns)
+# initial life stage estimates (includes unknowns and fish IDd via PIT so 
+# n_stagedat > n_chinin)
 stage_dat <- readRDS(here::here("data", "agg_lifestage_df.RDS")) %>% 
   dplyr::select(fish, stage, agg) 
 chin_in <- readRDS(here::here("data", "acousticOnly_GSI.RDS")) %>% 
-  left_join(., stage_dat, by = "fish") 
+  left_join(., stage_dat, by = "fish") %>% 
+  filter(!year == "2023")
+
 
 ## predict life stage based on fitted model 
 stage_mod <- readRDS(here::here("data", "stage_fl_hierA.RDS"))
@@ -75,27 +78,26 @@ pred_stage <- rbind(pred_dat, pred_dat_na) %>%
             .groups = "drop") 
 
 chin_stage <- left_join(chin_in, pred_stage, by = "fish") %>% 
-  mutate(med_stage = case_when(
-    stage == "mature" ~ 1,
-    stage == "immature" ~ 0,
-    #use median predicted posterior value when stage unknown
-    TRUE ~ med
-  )) %>% 
+  mutate(
+    med_stage = case_when(
+      stage == "mature" ~ 1,
+      stage == "immature" ~ 0,
+      #use median predicted posterior value when stage unknown
+      TRUE ~ med
+    ),
+    #correct missing agg ID
+    agg = ifelse(cu_name == "South Puget Sound", "Puget Sound", agg),
+    agg = agg_name
+  ) %>% 
   filter(!is.na(acoustic_year)) %>%
-  select(vemco_code = acoustic_year, acoustic_type, fl, med_stage, lipid,
-         cu_name, agg) %>% 
+  select(vemco_code = acoustic_year, tagging_year = year, acoustic_type, fl, 
+         med_stage, lipid, cu_name, agg) %>% 
   filter(grepl("V13P", acoustic_type))
-
-
-# ~2% of tags lack energy density estimates, impute
-interp_stage_dat <- VIM::kNN(chin_stage, k = 5) %>% 
-  select(-ends_with("imp")) 
 
 
 # moderately cleaned detections data (includes depth/temperature sensors)
 depth_raw <- readRDS(here::here("data", "detections_all.RDS")) %>%
-  left_join(., interp_stage_dat, 
-            by = "vemco_code") %>% 
+  left_join(., chin_stage, by = "vemco_code") %>% 
   left_join(., 
             rec %>% 
               select(receiver = receiver_name, trim_sn, mean_depth:shore_dist),
@@ -105,7 +107,8 @@ depth_raw <- readRDS(here::here("data", "detections_all.RDS")) %>%
     !station_name == "LakeWashington",
     grepl("V13P", acoustic_type)
   ) %>%
-  select(vemco_code, med_stage, fl, lipid, cu_name, agg, date_time, latitude, 
+  select(vemco_code, tagging_year, med_stage, fl, lipid, cu_name, agg, 
+         date_time, latitude, 
          longitude, receiver_name = receiver, trim_sn, region, 
          mean_bathy = mean_depth, max_bathy = max_depth, mean_slope, mean_aspect,
          shore_dist, depth)
@@ -123,7 +126,8 @@ calc_lipid <- function(mean_energy) {
 # Import UBC data
 hendricks_bio <- readRDS(here::here("data", "hendricks_chin_dat.RDS")) %>% 
   mutate(
-    lipid = calc_lipid(exp(mean_log_e))
+    lipid = calc_lipid(exp(mean_log_e)),
+    tagging_year = lubridate::year(date)
   )
 
 depth_h <- readRDS(here::here("data", "hendricks_depth_dets.RDS")) %>% 
@@ -133,7 +137,7 @@ depth_h <- readRDS(here::here("data", "hendricks_depth_dets.RDS")) %>%
   ) %>% 
   left_join(., 
             hendricks_bio %>% 
-              select(vemco_code, fl, lipid, cu_name, agg), 
+              select(vemco_code, tagging_year, fl, lipid, cu_name, agg), 
             by = "vemco_code") %>%
   select(colnames(depth_raw)) 
 
@@ -144,15 +148,47 @@ depth_dets1 <- rbind(depth_raw, depth_h) %>%
     hour = lubridate::hour(date_time) + 1,
     day = lubridate::day(date_time),
     month = lubridate::month(date_time),
-    year = lubridate::year(date_time)
+    year = lubridate::year(date_time),
+    cu_name = ifelse(is.na(cu_name), "unknown", cu_name),
+    agg = ifelse(is.na(agg), "unknown", agg)
   ) %>% 
   filter(!region == "fraser",
-         !is.na(depth))
+         !is.na(depth)) 
+
+
+# ~2% of tags lack energy density estimates, impute based on size, stock ID and 
+# year
+full_bio_dat <- depth_dets1 %>% 
+  select(vemco_code, med_stage, fl, lipid, cu_name, agg, tagging_year) %>%
+  distinct() 
+interp_lipid <- full_bio_dat %>%
+  select(-vemco_code) %>% 
+  VIM::kNN(., k = 5) %>% 
+  select(-ends_with("imp")) 
+full_bio_dat$lipid <- interp_lipid$lipid
+
+full_locs_dat <- depth_dets1 %>% 
+  select(latitude, longitude, mean_bathy, max_bathy, mean_slope, mean_aspect, 
+         shore_dist, receiver_name) %>% 
+  distinct()
+interp_bathy <- full_locs_dat %>% 
+  select(-receiver_name) %>% 
+  VIM::kNN(., k = 5) %>% 
+  select(-ends_with("imp")) 
+interp_bathy$receiver_name <- full_locs_dat$receiver_name
+
+depth_dets2 <- depth_dets1 %>% 
+  select(-c(lipid, latitude, longitude, mean_bathy, max_bathy, mean_slope, 
+            mean_aspect, shore_dist)) %>% 
+  left_join(., full_bio_dat %>% select(vemco_code, lipid), by = "vemco_code") %>% 
+  left_join(., 
+            interp_bathy, 
+            by = "receiver_name")
 
 
 ## CHECK FOR FAULTY TAGS -------------------------------------------------------
 
-deaths <- depth_dets1 %>%
+deaths <- depth_dets2 %>%
   group_by(vemco_code, receiver_name) %>%
   mutate(nn = n()) %>%
   filter(
@@ -160,7 +196,7 @@ deaths <- depth_dets1 %>%
   )
 
 ggplot() +
-  geom_point(data = depth_dets1 %>% filter(vemco_code %in% deaths$vemco_code),
+  geom_point(data = depth_dets2 %>% filter(vemco_code %in% deaths$vemco_code),
              aes(x = date_time, y = depth, fill = region),
              shape = 21) +
   facet_wrap(~vemco_code, scales = "free_x") +
@@ -168,7 +204,7 @@ ggplot() +
 # no evidence that fish died within detection distance of receiver
 
 # faulty tags
-sensors_fail <- depth_dets1 %>% 
+sensors_fail <- depth_dets2 %>% 
   mutate(time_stamp = paste(hour, day, month, year, sep = "_")) %>% 
   group_by(time_stamp, vemco_code) %>% 
   mutate(
@@ -178,7 +214,7 @@ sensors_fail <- depth_dets1 %>%
   filter(sd_depth < 0.1 & n > 5) %>% 
   droplevels()
 
-ggplot(depth_dets1 %>% 
+ggplot(depth_dets2 %>% 
          filter(vemco_code %in% unique(sensors_fail$vemco_code)[1:12])) +
   geom_point(aes(x = date_time, y = depth, fill = region),
              shape = 21) +
@@ -188,14 +224,14 @@ ggplot(depth_dets1 %>%
 
 
 # check above surface tags
-surface_tags <- depth_dets1 %>% 
+surface_tags <- depth_dets2 %>% 
   group_by(vemco_code) %>% 
   mutate(max_depth = min(depth)) %>% 
   filter(max_depth < 0) %>% 
   pull(vemco_code) %>% 
   unique()
 
-ggplot(depth_dets1 %>% 
+ggplot(depth_dets2 %>% 
          filter(vemco_code %in% surface_tags)) +
   geom_point(aes(x = date_time, y = depth, fill = region),
              shape = 21) +
@@ -213,7 +249,7 @@ ggplot(depth_dets1 %>%
 # 3) predictive grids for two time periods (July 1 and Feb 1)
 
 # expand depth dets by different covariates and depths
-trim_dets <- depth_dets1 %>% 
+trim_dets <- depth_dets2 %>% 
   select(year, month, day, hour, lat = latitude, lon = longitude) %>% 
   distinct()
 var_list <- c("u", "v", "w", "temp", "zooplankton", "oxygen")
@@ -465,14 +501,14 @@ saveRDS(roms_interp2_trim,
 
 roms_interp_trim <- readRDS(here::here("data", "interp_roms_surf_depth.RDS"))
 
-depth_utm <- lonlat_to_utm(depth_dets1$longitude, depth_dets1$latitude, 
+depth_utm <- lonlat_to_utm(depth_dets2$longitude, depth_dets2$latitude, 
                            zone = 10) 
-depth_dets1$utm_x <- depth_utm$X / 1000 
-depth_dets1$utm_y <- depth_utm$Y / 1000
+depth_dets2$utm_x <- depth_utm$X / 1000 
+depth_dets2$utm_y <- depth_utm$Y / 1000
 
 
 # add roms data (approximately 6.5k detections have no ROMS data)
-depth_dat <- depth_dets1 %>% 
+depth_dat <- depth_dets2 %>% 
   left_join(
     ., 
     roms_interp_trim, 
@@ -668,8 +704,8 @@ bio_dat <- rbind(
     agg = case_when(
       grepl("East Vancouver Island", cu_name) ~ "ECVI",
       grepl("Willamette", cu_name) ~ "LowCol",
-      grepl("Okanagan", cu_name) ~ "Col",
-      grepl("Upper Columbia", cu_name) ~ "Col",
+      grepl("Okanagan", cu_name) ~ "Up Col.",
+      grepl("Upper Columbia", cu_name) ~ "Up Col.",
       grepl("_1.", cu_name) ~ "FraserYear",
       grepl("Vancouver Island", cu_name) ~ "WCVI",
       grepl("_0.", cu_name) | agg == "Fraser" ~ "FraserSub",
@@ -678,10 +714,10 @@ bio_dat <- rbind(
     ),
     agg = factor(
       agg,
-      levels = c("Cali", "WA_OR", "Col", "LowCol", "PugetSo", "FraserYear",
+      levels = c("Cali", "WA_OR", "Up Col.", "LowCol", "Puget Sound", "FraserYear",
                  "FraserSub", "ECVI", "WCVI"),
-      labels = c("Cali.", "WA/OR.", "Upriver\nCol.", "Lower\nCol.", 
-                 "Puget\nSound", "Fraser\nYear.", "Fraser\nSub.", "ECVI", 
+      labels = c("Cali.", "WA/OR.", "Upriver\nCol.", "Lower\nCol.",
+                 "Puget\nSound", "Fraser\nYear.", "Fraser\nSub.", "ECVI",
                  "WCVI")),
     stage = ifelse(med_stage > 0.5, "mature", "immature")
   )
@@ -776,10 +812,12 @@ bottom_dot <- ggplot(depth_dat2 %>%
     breaks = c(0, -100, -200, -300), 
     labels = seq(0, 300, by = 100)
   ) +
-  scale_colour_gradient2(midpoint = 0.5, name = "Maturation Stage") 
+  scale_colour_gradient2(midpoint = 0.5, name = "Maturation Stage",
+                         n.breaks = 3) +
+  theme(legend.position = "top")
 
 png(here::here("figs", "ms_figs_rel", "depth_vs_bathy.png"),
-    height = 150, width = 85, units = "mm", res = 300)
+    height = 85, width = 85, units = "mm", res = 300)
 bottom_dot
 dev.off()
 

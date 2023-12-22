@@ -15,7 +15,7 @@ profile_dat <- read.csv(
 
 depth_dat_raw <- readRDS(
   here::here("data", "depth_dat_nobin.RDS")) %>%
-  mutate(stage = as.factor(stage),
+  mutate(#stage = as.factor(stage),
          month = lubridate::month(date_time_utm),
          day = lubridate::day(date_time_utm),
          hour = lubridate::hour(date_time_utm) + 1) 
@@ -57,19 +57,6 @@ depth_dat <- left_join(
   ) %>% 
   select(year, month, day, hour, latitude, longitude, 
          temp, oxy_mg_l, region_f, season, depth)
-
-depth_dat %>% 
-  ggplot(.) +
-  geom_point(aes(x = temp, y = depth), alpha = 0.3, fill = "red",
-             shape = 21) +
-  facet_grid(region_f~season)
-
-depth_dat %>% 
-  ggplot(.) +
-  geom_point(aes(x = oxy_mg_l, y = depth), alpha = 0.3, fill = "blue",
-             shape = 21) +
-  facet_grid(region_f~season)
-
 
 # as above but with bins for temp and depth
 depth_seq <- seq(-340, 0, by = 20)

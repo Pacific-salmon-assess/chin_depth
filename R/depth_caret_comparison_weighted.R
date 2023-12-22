@@ -5,7 +5,7 @@
 ## 1) Model type (GBM vs. RF)
 ## 2) Hyperparameters
 ## 3) Response variable (logit transformed, relative depth, absolute depth)
-## Weights variable by inverse of sqrt(n_det)
+## Weights variable by inverse of a) n_det or b) sqrt(n_det)
 
 library(plyr)
 library(tidyverse)
@@ -137,8 +137,12 @@ gbm_grid <-  expand.grid(
   n.minobsinnode = c(5, 10, 20)
 )
 
-rf_grid <- expand.grid(tune_length = 10,
-                       n.trees = seq(1000, 3000, by = 500))
+rf_grid <- expand.grid(#tune_length = 10,
+                       mtry = seq(1, 17, by = 2),
+                       min.node.size = 5,
+                       splitrule = "extratrees")
+rf_n_trees <- 1000#seq(1000, 3000, by = 500)
+
 
 
 fit_foo <- function(model, baked_train) {
@@ -158,8 +162,8 @@ fit_foo <- function(model, baked_train) {
   
   if (model %in% c("rf_weighted", "rf", "rf_weighted2")) {
     # iterate over different number of trees
-    fits <- vector(length = length(rf_grid$n.trees), mode = "list")
-    names(fits) <- paste("trees_", rf_grid$n.trees, sep = "")
+    fits <- vector(length = length(rf_n_trees), mode = "list")
+    names(fits) <- paste("trees_", rf_n_trees, sep = "")
     wts <- if (model == "rf_weighted") { 
       train_weights
     } else if (model == "rf_weighted2") {
@@ -172,12 +176,13 @@ fit_foo <- function(model, baked_train) {
         depth_var ~ .,
         baked_train,
         method = "ranger", 
+        num.threads = 2,
         weights = wts,
         metric = "RMSE",
         maximize = FALSE,
         tuneLength = unique(rf_grid$tune_length),
         trControl = ctrl,
-        num.trees = rf_grid$n.trees[i]
+        num.trees = rf_n_trees[i]
       ) 
       fits[[i]]$results$n_trees <- rf_grid$n.trees[i]
     }
@@ -225,6 +230,21 @@ saveRDS(rf_list,
         here::here("data", "model_fits", "rf_model_comparison.rds"))
 rf_list <- readRDS(here::here("data", "model_fits", "rf_model_comparison.rds"))
 
+
+tt <- train(
+  depth_var ~ .,
+  rf_tbl$baked_train[[1]][1:10000, ],
+  method = "ranger", 
+  num.threads = 2,
+  weights = NULL,
+  metric = "RMSE",
+  maximize = FALSE,
+  tuneGrid = rf_grid[2, ],
+  # tuneLength = unique(rf_grid$tune_length),
+  # splitrule = "extratrees",
+  trControl = ctrl,
+  num.trees = 500#rf_grid$n.trees[i]
+) 
 
 rf_weighted_tbl <- model_tbl %>% filter(model_type == "rf_weighted")
 rf_weighted_list <- future_pmap(

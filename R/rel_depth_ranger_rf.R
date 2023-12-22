@@ -104,9 +104,9 @@ ranger_rf <- ranger::ranger(
 )
 
 saveRDS(ranger_rf,
-        here::here("data", "model_fits", "relative_rf_ranger_resubmit.rds"))
+        here::here("data", "model_fits", "relative_rf_ranger.rds"))
 
-ranger_rf <- readRDS(here::here("data", "model_fits", "relative_rf_ranger_resubmit.rds"))
+ranger_rf <- readRDS(here::here("data", "model_fits", "relative_rf_ranger.rds"))
 
 
 # CHECK PREDS ------------------------------------------------------------------
@@ -346,7 +346,8 @@ pred_dat2 <- pred_dat1 %>%
     pred_up = pred_rf1$predictions[, "up"] * max_bathy,
     utm_x_m = utm_x * 1000,
     utm_y_m = utm_y * 1000,
-    pred_int_width = pred_up - pred_lo
+    pred_int_width = pred_up - pred_lo,
+    pred_int_width2 = rel_pred_up - rel_pred_lo
   ) 
 
   
@@ -371,23 +372,28 @@ mean_depth <- base_plot +
   
 var_depth <- base_plot +
   geom_raster(data = pred_dat2 %>% filter(season == "summer"), 
-              aes(x = utm_x_m, y = utm_y_m, fill = pred_int_width)) +
+              aes(x = utm_x_m, y = utm_y_m, fill = pred_int_width2)) +
   geom_sf(data = coast_utm) +
-  scale_fill_viridis_c(name = "80% Prediction\nInt. Width (m)", 
+  scale_fill_viridis_c(name = "80% Prediction\nInt. Width (BDR)", 
                        option = "C",
                        direction = -1)  +
   theme(legend.position = "top",
         axis.text = element_blank())
 
-avg_depth1 <- cowplot::plot_grid(plotlist = list(rel_depth, mean_depth),
-                                 ncol = 2)
+# avg_depth1 <- cowplot::plot_grid(plotlist = list(rel_depth, mean_depth),
+#                                  ncol = 2)
 # avg_depth <- cowplot::plot_grid(plotlist = list(mean_depth, avg_depth1),
 #                                 ncol = 2,
 #                                 rel_widths = c(1.5, 1))
+avg_depth1 <- cowplot::plot_grid(plotlist = list(mean_depth, var_depth),
+                                 ncol = 1)
+avg_depth <- cowplot::plot_grid(plotlist = list(rel_depth, avg_depth1),
+                                ncol = 2,
+                                rel_widths = c(1.5, 1))
 
 png(here::here("figs", "ms_figs_rel", "avg_depth.png"), 
     height = 110, width = 170, units = "mm", res = 300)
-avg_depth1
+avg_depth
 dev.off()
 
 # zoom in on JdF
@@ -647,7 +653,8 @@ rel_latent <- base_plot +
   geom_sf(data = coast_utm) +
   scale_fill_viridis_c(name = "Predicted\nBathymetric\nDepth Ratio",
                        direction = -1, 
-                       option = "A") +
+                       option = "A",
+                       guide = guide_legend(reverse = FALSE)) +
   geom_text(aes(x = -Inf, y = Inf, label = "f)"), hjust = -0.5, vjust = 1.5) +
   theme(legend.position = c(0.15, 0.27),#"left",
         legend.key.size = unit(0.75, 'cm'),

@@ -227,16 +227,17 @@ hist(resid(fit_sub))
 ## FIT RANGERS -----------------------------------------------------------------
 
 train_depth_ml <- train_depth %>% 
-         shore_dist, u, v, w, roms_temp, zoo, oxygen, thermo_depth, det_dayx,
   select(rel_depth, fl, lipid, med_stage, utm_y, utm_x, mean_bathy, mean_slope,
+         shore_dist, u, v, w, roms_temp, zoo, oxygen, thermo_depth, det_dayx,
          det_dayy, moon_illuminated, day_night_dummy)
+
 
 # hyperpars based on top model from depth_caret_comparison_weighted.R
 ranger_rf <- ranger::ranger(
   rel_depth ~ .,
   data = train_depth_ml,
   num.trees =  1000, #$rf_list$rel_depth$top_model$num.trees,
-  mtry = 17, #rf_list$rel_depth$top_model$mtry,
+  mtry = 9, #rf_list$rel_depth$top_model$mtry,
   # keep.inbag = TRUE for quantile predictions
   keep.inbag = TRUE,
   quantreg = TRUE,
@@ -247,7 +248,7 @@ ranger_rf <- ranger::ranger(
 ranger_rf_w <- ranger::ranger(
   rel_depth ~ .,
   data = train_depth_ml,
-  num.trees =  2500,#rf_weighted_list$rel_depth$top_model$num.trees,
+  num.trees =  1000,#rf_weighted_list$rel_depth$top_model$num.trees,
   mtry = 9, #rf_weighted_list$rel_depth$top_model$mtry,
   case.weights = train_depth$wt,
   # keep.inbag = TRUE for quantile predictions
@@ -260,8 +261,8 @@ ranger_rf_w <- ranger::ranger(
 ranger_rf_w2 <- ranger::ranger(
   rel_depth ~ .,
   data = train_depth_ml,
-  num.trees =  2500,#rf_weighted_list$rel_depth$top_model$num.trees,
-  mtry = 11, #rf_weighted_list$rel_depth$top_model$mtry,
+  num.trees =  1000,#rf_weighted_list$rel_depth$top_model$num.trees,
+  mtry = 15, #rf_weighted_list$rel_depth$top_model$mtry,
   case.weights = train_depth$wt2,
   # keep.inbag = TRUE for quantile predictions
   keep.inbag = TRUE,
@@ -276,9 +277,9 @@ ranger_list <- list(ranger_rf,
 saveRDS(ranger_list, here::here("data", "model_fits", "supp_ranger_fits.rds"))
 
 
-rf_preds <- predict(ranger_rf, data = train_depth_ml)
-rf_w_preds <- predict(ranger_rf_w, data = train_depth_ml)
-rf_w2_preds <- predict(ranger_rf_w2, data = train_depth_ml)
+rf_preds <- predict(ranger_rf, data = train_depth_ml %>% select(-rel_depth))
+rf_w_preds <- predict(ranger_rf_w, data = train_depth_ml %>% select(-rel_depth))
+rf_w2_preds <- predict(ranger_rf_w2, data = train_depth_ml %>% select(-rel_depth))
 
 
 ## CHECK AUTOCORRELATION -------------------------------------------------------
@@ -712,9 +713,11 @@ plot_foo <- function (data, ...) {
     geom_line(aes(y = mean, colour = model_family)) +
     geom_ribbon(aes(ymin = lo, ymax = up, fill = model_family), alpha = 0.4) +
     ggsidekick::theme_sleek() +
-    scale_x_continuous(expand = c(0, 0))+
+    scale_x_continuous(expand = c(0, 0),
+                       breaks = scales::pretty_breaks(n = 3))+
     theme(
-      axis.title.y = element_blank()
+      axis.title.y = element_blank(),
+      panel.spacing = unit(1, "lines")
     ) +
     coord_cartesian(ylim = c(-1, -0))
 }

@@ -185,7 +185,7 @@ fit_foo <- function(model, baked_train) {
         trControl = ctrl,
         num.trees = rf_n_trees[i]
       ) 
-      fits[[i]]$results$n_trees <- rf_grid$n.trees[i]
+      fits[[i]]$results$n_trees <- rf_n_trees[i]
     }
     fit_results <- purrr::map(fits, function (x) x$results) %>% 
       bind_rows()
@@ -329,14 +329,12 @@ rf_tbl$top_model <- top_rangers
 rf_weighted_tbl$top_model <- top_rangers_weighted
 rf_weighted2_tbl$top_model <- top_rangers_weighted2
 gbm_tbl$top_model <- map(gbm_list, function (x) x$top_model) 
-model_tbl <- list(gbm_tbl, rf_tbl, 
-                  # rf_weighted_tbl
-                  rf_weighted2_tbl) %>% 
+model_tbl <- list(gbm_tbl, rf_tbl, rf_weighted_tbl, rf_weighted2_tbl) %>% 
   bind_rows()
+saveRDS(model_tbl,
+        here::here("data", "model_fits", "comp_top_model_tbl.rds"))
+model_tbl <- readRDS(here::here("data", "model_fits", "comp_top_model_tbl.rds"))
 
-# pp <- predict(top_rangers[[1]], data = rf_tbl$baked_train[[1]])
-# pp2 <- predict(top_rangers_weighted[[1]], data = rf_weighted_tbl$baked_train[[1]])
-# plot(pp$predictions ~ pp2$predictions)
 
 # calculate RMSE relative to observations in real space for top models
 # bathy vectors to adjust proportional data
@@ -457,31 +455,36 @@ gbm_hyper_plot <- ggplot(gbm_dat) +
   theme(legend.position = "top") +
   ggsidekick::theme_sleek()
 
+# weighted and unweighted
 rf_dat <- map2(names(rf_list), rf_list, function (name, x) {
   x$results %>% 
     mutate(response = name,
-           min.node.size = as.factor(min.node.size))
+           min.node.size = as.factor(min.node.size),
+           model = "rf")
 }) %>% 
   bind_rows() 
-rf_hyper_plot <- ggplot(rf_dat) +
-  geom_line(aes(x = mtry, y = RMSE, color = splitrule)) +
-  facet_grid(response~n_trees, scales = "free_y") +
-  theme(legend.position = "top") +
-  ggsidekick::theme_sleek()
-
-
 rf_weighted_dat <- map2(names(rf_weighted_list), rf_weighted_list, function (name, x) {
   x$results %>% 
     mutate(response = name,
-           min.node.size = as.factor(min.node.size))
+           min.node.size = as.factor(min.node.size),
+           model = "rf_weighted")
+}) %>% 
+  bind_rows()
+rf_weighted2_dat <- map2(names(rf_weighted2_list), rf_weighted2_list, function (name, x) {
+  x$results %>% 
+    mutate(response = name,
+           min.node.size = as.factor(min.node.size),
+           model = "rf_weighted2")
 }) %>% 
   bind_rows() 
-rf_weighted_hyper_plot <- ggplot(rf_weighted_dat) +
-  geom_line(aes(x = mtry, y = RMSE, color = splitrule)) +
-  facet_grid(response~n_trees, scales = "free_y") +
+
+rf_hyper_plot <- list(rf_dat, rf_weighted_dat, rf_weighted2_dat) %>% 
+  bind_rows() %>% 
+  ggplot(.) +
+  geom_line(aes(x = mtry, y = RMSE, color = model)) +
+  facet_wrap(~response, scales = "free_y") +
   theme(legend.position = "top") +
   ggsidekick::theme_sleek()
-
 
 ## export 
 png(here::here("figs", "model_comp", "gbm_hyper_plot.png"), units = "in",

@@ -859,33 +859,41 @@ n_day_dat <- depth_dat2 %>%
             deployment_dates,
             by = "vemco_code") %>%
   mutate(
-    days_before_det = difftime(release_date, min_time, units = "days"),
+    days_before_det = difftime(release_date, min_time, units = "days"), 
     days_at_large = difftime(release_date, max_time, units = "days")
   )
 
-mean(n_day_dat$days_before_det)
-range(n_day_dat$days_before_det)
-
-
-det_hist <- ggplot(n_det_dat, aes(x = n)) +
-  geom_histogram() + 
+det_hist <- n_det_dat %>% 
+  filter(n < 600) %>% #excludes n=17 tags
+  ggplot(., aes(x = n)) +
+  geom_histogram(binwidth = 10) + 
   ggsidekick::theme_sleek() +
   labs(x = "Detections") +
   theme(axis.title.y = element_blank())
 
-day_hist <- ggplot(n_day_dat, aes(x = as.numeric(timespan))) +
-  geom_histogram() + 
+day_first_det_hist <- n_day_dat %>% 
+  filter(days_before_det > -100) %>% #excludes n=16
+  ggplot(., 
+         aes(x = -1 * as.numeric(days_before_det))) +
+  geom_histogram(binwidth = 5) + 
+  ggsidekick::theme_sleek() +
+  labs(x = "Days Between Release and First Detection") +
+  theme(axis.title.y = element_blank())
+
+day_at_large_hist <- ggplot(n_day_dat, 
+                            aes(x = -1 * as.numeric(days_at_large))) +
+  geom_histogram(binwidth = 10) + 
   ggsidekick::theme_sleek() +
   labs(x = "Days Between Release and Last Detection") +
   theme(axis.title.y = element_blank())
 
 
 two_panel <- cowplot::plot_grid(
-  det_hist, day_hist, ncol = 1
+  det_hist, day_first_det_hist, day_at_large_hist, ncol = 1
 )
 
 png(here::here("figs", "ms_figs_rel", "detection_histograms.png"),
-    height = 5, width = 4.5, res = 250, units = "in")
+    height = 7, width = 4.5, res = 250, units = "in")
 gridExtra::grid.arrange(
   gridExtra::arrangeGrob(
     two_panel, 
@@ -1096,6 +1104,23 @@ blank_p <- ggplot() +
   scale_y_continuous(expand = c(0, 0))
 
 
+# inset map
+w_can <- map_data("world", region = c("usa", "canada")) %>%
+  fortify(.) 
+inset_map <- ggplot() +
+  geom_polygon(data = w_can, mapping = aes(x = long, y = lat, group = group), 
+               color = "black", fill = "grey") + 
+  labs(x = "", y = "") +
+  geom_rect(aes(xmin = -127.5, ymin = 46, xmax = -122, ymax = 49.5),
+            fill = NA, lty = 2, col = "red") +
+  coord_map(ylim = c(28, 56), xlim = c(-132, -118)) +
+  ggsidekick::theme_sleek() +
+  theme(strip.background = element_rect(colour="white", fill="white"),
+        legend.position = "top",
+        axis.title = element_blank(),
+        axis.ticks = element_blank(),
+        axis.text = element_blank()) 
+
 # make plots
 rec_plot <-  blank_p +
   geom_sf(data = coast_utm_rec, fill = "darkgrey") +
@@ -1118,6 +1143,12 @@ rec_plot <-  blank_p +
   scale_shape_manual(values = c(23, 24), guide = NULL) +
   coord_sf(ylim = c(min(domain_coords$Y), max(domain_coords$Y) - 15000),
            xlim = c(min(domain_coords$X), max(domain_coords$X) - 15000))
+
+rec_plot2 <- cowplot::ggdraw(rec_plot) +
+  cowplot::draw_plot(inset_map, x = 0.07, y = 0.1, #vjust = -0.2,
+                     hjust = 0.1,
+                     width = 0.37, height = 0.37)
+
 depth_plot <- blank_p +
   geom_raster(data = bath_grid,
               aes(x = X, y = Y, fill = depth)) +
@@ -1153,7 +1184,7 @@ bathy_vars1 <- cowplot::plot_grid(
   ncol = 1
 )
 bathy_vars <- cowplot::plot_grid(
-  plotlist = list(rec_plot, bathy_vars1),
+  plotlist = list(rec_plot2, bathy_vars1),
   ncol = 2,
   rel_widths = c(1.5, 1)
 )

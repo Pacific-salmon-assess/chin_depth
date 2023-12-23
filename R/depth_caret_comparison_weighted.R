@@ -171,16 +171,17 @@ fit_foo <- function(model, baked_train) {
     } else {
         NULL
       }
-    for (i in seq_along(fits)) {
+    for (i in 1:length(rf_n_trees)) {
       fits[[i]] <- train(
         depth_var ~ .,
         baked_train,
         method = "ranger", 
-        num.threads = 2,
+        num.threads = 4,
         weights = wts,
         metric = "RMSE",
         maximize = FALSE,
-        tuneLength = unique(rf_grid$tune_length),
+        # tuneLength = unique(rf_grid$tune_length),
+        tuneGrid = rf_grid,
         trControl = ctrl,
         num.trees = rf_n_trees[i]
       ) 
@@ -230,21 +231,6 @@ saveRDS(rf_list,
         here::here("data", "model_fits", "rf_model_comparison.rds"))
 rf_list <- readRDS(here::here("data", "model_fits", "rf_model_comparison.rds"))
 
-
-tt <- train(
-  depth_var ~ .,
-  rf_tbl$baked_train[[1]][1:10000, ],
-  method = "ranger", 
-  num.threads = 2,
-  weights = NULL,
-  metric = "RMSE",
-  maximize = FALSE,
-  tuneGrid = rf_grid[2, ],
-  # tuneLength = unique(rf_grid$tune_length),
-  # splitrule = "extratrees",
-  trControl = ctrl,
-  num.trees = 500#rf_grid$n.trees[i]
-) 
 
 rf_weighted_tbl <- model_tbl %>% filter(model_type == "rf_weighted")
 rf_weighted_list <- future_pmap(

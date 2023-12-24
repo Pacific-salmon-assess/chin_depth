@@ -251,7 +251,7 @@ imp_plot <- ggplot(imp_dat, aes(x = fct_reorder(var_f, - val), y = val)) +
     axis.text.x = element_text(angle = 45, hjust = 1)
   ) +
   scale_y_continuous(
-    limits = c(0, 0.051),
+    limits = c(0, 0.055),
     expand = c(0, 0)
   ) +
   guides(
@@ -393,126 +393,109 @@ png(here::here("figs", "ms_figs_rel", "avg_depth.png"),
 avg_depth
 dev.off()
 
-# zoom in on JdF
-# base_plot +
-#   geom_raster(data = pred_dat2 %>%
-#                 filter(season == "summer",
-#                        utm_x_m > 370000 & utm_x_m < 470000,
-#                        utm_y_m > 5300000 & utm_y_m < 5450000),
-#               aes(x = utm_x_m, y = utm_y_m, fill = pred_med)) +
-#   geom_sf(data = coast_utm) +
-#   scale_fill_viridis_c(name = "Mean Depth (m)",
-#                        direction = -1) +
-#   theme(legend.position = "top") +
-#   scale_x_continuous(
-#     limits = c(370000, 470000),
-#     expand = c(0, 0)
-#   ) +
-#   scale_y_continuous(limits = c(5300000, 5450000), expand = c(0, 0))
-
-
-## generate spatial contrasts
-# 1) seasonal effects for immature fish
-# 2) maturity effects for avg (July 1)
-# 3) moon illumination effects for avg  (July 1)
-stage_dat <- depth_dat_raw %>% 
-  filter(med_stage %in% c("0", "1")) %>% 
-  select(vemco_code, fl, lipid, med_stage) %>% 
-  distinct() %>% 
-  group_by(med_stage) %>% 
-  dplyr::summarize(
-    fl = mean(fl),
-    lipid = mean(lipid)
-  ) %>% 
-  mutate(stage = ifelse(med_stage == "1", "mature", "immature")) %>% 
-  rbind(., 
-        data.frame(
-          stage = "average",
-          fl = mean(bio_dat$fl),
-          lipid = mean(bio_dat$lipid),
-          med_stage = 0.5
-        ))
-
-#subset bath_grid to remove covariates defined in predictive tibble
-bath_grid_trim <- bath_grid %>%
-  select(
-    -c(local_day, moon_illuminated, det_dayx, det_dayy, day_night_night)
-  ) %>%
-  group_by(season) %>%
-  group_nest()
-
-depth_dat_summer <- depth_dat_raw %>%
-  filter(local_day > 152 & local_day < 243)
-t_range <- c(mean(depth_dat_summer$roms_temp) - sd(depth_dat_summer$roms_temp),
-             mean(depth_dat_summer$roms_temp) + sd(depth_dat_summer$roms_temp))
-z_range <- c(mean(depth_dat_summer$zoo) - sd(depth_dat_summer$zoo),
-             mean(depth_dat_summer$zoo) + sd(depth_dat_summer$zoo))
-o_range <- c(mean(depth_dat_summer$oxygen) - sd(depth_dat_summer$oxygen),
-             mean(depth_dat_summer$oxygen) + sd(depth_dat_summer$oxygen))
-
-# define different counterfactual contrasts
-pred_tbl <- tibble(
-  contrast = rep(c("season", "maturity", "moon light",
-                   "day night", "temp", "zoo", "oxy"), each = 2),
-  local_day = c(46, 211, 211, 211, 211, 211, 211, 211, 211, 211, 211, 211, 211,
-                211),
-  med_stage = c(0, 0, 0, 1, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5,
-                   0.5),
-  moon_illuminated = c(0.5, 0.5, 0.5, 0.5, 0, 1, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5,
-                       0.5, 0.5),
-  day_night_night = c(0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0, 1, 0.5, 0.5, 0.5, 0.5,
-                      0.5, 0.5),
-  #leave NaNs to be replaced by bath_grid_trim except for temp and zoo contrasts
-  adj_temp = c(rep(NaN, 8), t_range[1], t_range[2], NaN, NaN, NaN, NaN),
-  adj_zoo = c(rep(NaN, 10), z_range[1], z_range[2], NaN, NaN),
-  adj_oxy = c(rep(NaN, 12), o_range[1], o_range[2])
-) %>%
-  mutate(
-    det_dayx = sin(2 * pi * local_day / 365),
-    det_dayy = cos(2 * pi * local_day / 365),
-    season = fct_recode(as.factor(local_day),
-                        "winter" = "46", "summer" = "211"),
-    month = factor(as.factor(local_day), labels = c("1", "7"))) %>%
-  left_join(., bath_grid_trim, by = "season") %>%
-  left_join(., stage_dat, by = "med_stage") %>%
-  unnest(cols = c(data)) %>%
-  # replace temp oxy and zoo data for those specific contrasts
-  mutate(
-    roms_temp = ifelse(!is.na(adj_temp), adj_temp, roms_temp),
-    zoo = ifelse(!is.na(adj_zoo), adj_zoo, zoo),
-    oxygen = ifelse(!is.na(adj_oxy), adj_oxy, oxygen)
-  ) %>%
-  group_by(contrast, .add = TRUE) %>%
-  group_nest(.key = "pred_grid") %>%
-  mutate(
-    # generate predictions
-    preds = purrr::map(pred_grid, function (x) {
-      pred_rf <- predict(ranger_rf,
-                         type = "quantiles",
-                         quantiles = c(0.1, 0.5, 0.9),
-                         data = x,
-                         all = TRUE)
-      colnames(pred_rf$predictions) <- c("lo", "med", "up")
-
-      x %>%
-        mutate(
-          rel_pred_med = pred_rf$predictions[, "med"],
-          rel_pred_lo = pred_rf$predictions[, "lo"],
-          rel_pred_up = pred_rf$predictions[, "up"],
-          pred_med = pred_rf$predictions[, "med"] * max_bathy,
-          pred_lo = pred_rf$predictions[, "lo"] * max_bathy,
-          pred_up = pred_rf$predictions[, "up"] * max_bathy,
-          utm_x_m = utm_x * 1000,
-          utm_y_m = utm_y * 1000
-        )
-    }
-    )
-    )
-
-pred_dat <- pred_tbl %>%
-  select(-pred_grid) %>%
-  unnest(cols = preds)
-saveRDS(pred_dat, here::here("data", "spatial_preds.rds"))
+# 
+# ## generate spatial contrasts
+# # 1) seasonal effects for immature fish
+# # 2) maturity effects for avg (July 1)
+# # 3) moon illumination effects for avg  (July 1)
+# stage_dat <- depth_dat_raw %>% 
+#   filter(med_stage %in% c("0", "1")) %>% 
+#   select(vemco_code, fl, lipid, med_stage) %>% 
+#   distinct() %>% 
+#   group_by(med_stage) %>% 
+#   dplyr::summarize(
+#     fl = mean(fl),
+#     lipid = mean(lipid)
+#   ) %>% 
+#   mutate(stage = ifelse(med_stage == "1", "mature", "immature")) %>% 
+#   rbind(., 
+#         data.frame(
+#           stage = "average",
+#           fl = mean(bio_dat$fl),
+#           lipid = mean(bio_dat$lipid),
+#           med_stage = 0.5
+#         ))
+# 
+# #subset bath_grid to remove covariates defined in predictive tibble
+# bath_grid_trim <- bath_grid %>%
+#   select(
+#     -c(local_day, moon_illuminated, det_dayx, det_dayy, day_night_night)
+#   ) %>%
+#   group_by(season) %>%
+#   group_nest()
+# 
+# depth_dat_summer <- depth_dat_raw %>%
+#   filter(local_day > 152 & local_day < 243)
+# t_range <- c(mean(depth_dat_summer$roms_temp) - sd(depth_dat_summer$roms_temp),
+#              mean(depth_dat_summer$roms_temp) + sd(depth_dat_summer$roms_temp))
+# z_range <- c(mean(depth_dat_summer$zoo) - sd(depth_dat_summer$zoo),
+#              mean(depth_dat_summer$zoo) + sd(depth_dat_summer$zoo))
+# o_range <- c(mean(depth_dat_summer$oxygen) - sd(depth_dat_summer$oxygen),
+#              mean(depth_dat_summer$oxygen) + sd(depth_dat_summer$oxygen))
+# 
+# # define different counterfactual contrasts
+# pred_tbl <- tibble(
+#   contrast = rep(c("season", "maturity", "moon light",
+#                    "day night", "temp", "zoo", "oxy"), each = 2),
+#   local_day = c(46, 211, 211, 211, 211, 211, 211, 211, 211, 211, 211, 211, 211,
+#                 211),
+#   med_stage = c(0, 0, 0, 1, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5,
+#                    0.5),
+#   moon_illuminated = c(0.5, 0.5, 0.5, 0.5, 0, 1, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5,
+#                        0.5, 0.5),
+#   day_night_night = c(0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0, 1, 0.5, 0.5, 0.5, 0.5,
+#                       0.5, 0.5),
+#   #leave NaNs to be replaced by bath_grid_trim except for temp and zoo contrasts
+#   adj_temp = c(rep(NaN, 8), t_range[1], t_range[2], NaN, NaN, NaN, NaN),
+#   adj_zoo = c(rep(NaN, 10), z_range[1], z_range[2], NaN, NaN),
+#   adj_oxy = c(rep(NaN, 12), o_range[1], o_range[2])
+# ) %>%
+#   mutate(
+#     det_dayx = sin(2 * pi * local_day / 365),
+#     det_dayy = cos(2 * pi * local_day / 365),
+#     season = fct_recode(as.factor(local_day),
+#                         "winter" = "46", "summer" = "211"),
+#     month = factor(as.factor(local_day), labels = c("1", "7"))) %>%
+#   left_join(., bath_grid_trim, by = "season") %>%
+#   left_join(., stage_dat, by = "med_stage") %>%
+#   unnest(cols = c(data)) %>%
+#   # replace temp oxy and zoo data for those specific contrasts
+#   mutate(
+#     roms_temp = ifelse(!is.na(adj_temp), adj_temp, roms_temp),
+#     zoo = ifelse(!is.na(adj_zoo), adj_zoo, zoo),
+#     oxygen = ifelse(!is.na(adj_oxy), adj_oxy, oxygen)
+#   ) %>%
+#   group_by(contrast, .add = TRUE) %>%
+#   group_nest(.key = "pred_grid") %>%
+#   mutate(
+#     # generate predictions
+#     preds = purrr::map(pred_grid, function (x) {
+#       pred_rf <- predict(ranger_rf,
+#                          type = "quantiles",
+#                          quantiles = c(0.1, 0.5, 0.9),
+#                          data = x,
+#                          all = TRUE)
+#       colnames(pred_rf$predictions) <- c("lo", "med", "up")
+# 
+#       x %>%
+#         mutate(
+#           rel_pred_med = pred_rf$predictions[, "med"],
+#           rel_pred_lo = pred_rf$predictions[, "lo"],
+#           rel_pred_up = pred_rf$predictions[, "up"],
+#           pred_med = pred_rf$predictions[, "med"] * max_bathy,
+#           pred_lo = pred_rf$predictions[, "lo"] * max_bathy,
+#           pred_up = pred_rf$predictions[, "up"] * max_bathy,
+#           utm_x_m = utm_x * 1000,
+#           utm_y_m = utm_y * 1000
+#         )
+#     }
+#     )
+#     )
+# 
+# pred_dat <- pred_tbl %>%
+#   select(-pred_grid) %>%
+#   unnest(cols = preds)
+# saveRDS(pred_dat, here::here("data", "spatial_preds.rds"))
 
 pred_dat <- readRDS(here::here("data", "spatial_preds.rds"))
 
@@ -680,9 +663,9 @@ rel_latent <- base_plot +
 #     moon_illuminated = median(train_depth_baked$moon_illuminated),
 #     day_night_night = 0.5,
 #     med_stage = 0.5
-#   ) %>% 
+#   ) %>%
 #   #duplicate 100 times
-#   as_tibble() %>% 
+#   as_tibble() %>%
 #   slice(rep(1:n(), each = 100))
 # 
 # 
@@ -690,22 +673,22 @@ rel_latent <- base_plot +
 # gen_pred_dat <- function(var_in) {
 #   # necessary to deal with string input
 #   varname <- ensym(var_in)
-#   group_vals <- depth_dat_raw %>% 
+#   group_vals <- depth_dat_raw %>%
 #     dplyr::summarize(min_v = min(!!varname),
 #                      max_v = max(!!varname))
 #   # change to dataframe
 #   var_seq <- NULL
 #   for (i in 1:nrow(group_vals)) {
-#     var_seq <- c(var_seq, 
-#                  seq(group_vals$min_v[i], group_vals$max_v[i], 
+#     var_seq <- c(var_seq,
+#                  seq(group_vals$min_v[i], group_vals$max_v[i],
 #                      length.out = 100))
 #   }
 #   # var_seq2 <- rep(var_seq, times = length(unique(new_dat$site)))
 #   var_seq2 <- var_seq
-#   new_dat %>% 
-#     select(- {{ var_in }}) %>% 
-#     mutate(dum = var_seq2) %>% 
-#     dplyr::rename(!!varname := dum) %>% 
+#   new_dat %>%
+#     select(- {{ var_in }}) %>%
+#     mutate(dum = var_seq2) %>%
+#     dplyr::rename(!!varname := dum) %>%
 #     mutate(
 #       det_dayx = sin(2 * pi * local_day / 365),
 #       det_dayy = cos(2 * pi * local_day / 365)
@@ -716,34 +699,34 @@ rel_latent <- base_plot +
 # # predictions function
 # pred_foo <- function(preds_in, ...) {
 #   preds1 <- predict(
-#     ranger_rf, 
+#     ranger_rf,
 #     data = preds_in,
 #     ...
 #   )
-#   
+# 
 #   if (is.null(preds1$se)) {
 #     preds_out <- preds1$predictions
 #     colnames(preds_out) <- c("lo", "med", "up")
-#     dum <- cbind(preds_in, preds_out) %>% 
+#     dum <- cbind(preds_in, preds_out) %>%
 #       mutate(med = -1 * med)
 #   }
 #   if (!is.null(preds1$se)) {
 #     preds_out <- cbind(
 #       preds1$predictions,
 #       preds1$se
-#     ) 
+#     )
 #     colnames(preds_out) <- c("mean", "se")
 #     dum <- cbind(preds_in, preds_out) %>%
 #       mutate(
 #         lo = mean + (qnorm(0.025) * se),
-#         up = mean + (qnorm(0.975) * se), 
+#         up = mean + (qnorm(0.975) * se),
 #         mean = -1 * mean
 #       )
 #   }
-#   
+# 
 #   dum %>%
 #     mutate(
-#       lo = -1 * lo, 
+#       lo = -1 * lo,
 #       up = -1 * up
 #     )
 # }

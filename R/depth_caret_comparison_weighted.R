@@ -421,7 +421,7 @@ rmse_out <- model_tbl %>%
 
 png(here::here("figs", "model_comp", "rmse_plot.png"), units = "in",
     height = 3.5, width = 6, res = 250)
-ggplot(rmse_out %>% filter(model_type %in% c("gbm", "rf_weighted"))) +
+ggplot(rmse_out %>% filter(model_type %in% c("gbm", "rf"))) +
   geom_point(aes(x = model_type, y = rmse, fill = response),
              shape = 21,
              position = position_dodge(width=0.75)) +

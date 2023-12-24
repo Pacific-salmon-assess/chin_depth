@@ -137,11 +137,10 @@ gbm_grid <-  expand.grid(
   n.minobsinnode = c(5, 10, 20)
 )
 
-rf_grid <- expand.grid(#tune_length = 10,
-                       mtry = seq(1, 17, by = 2),
+rf_grid <- expand.grid(mtry = seq(1, 17, by = 2),
                        min.node.size = 5,
-                       splitrule = "extratrees")
-rf_n_trees <- 1000#seq(1000, 3000, by = 500)
+                       splitrule = c("variance", "extratrees"))
+rf_n_trees <- seq(1000, 3000, by = 500)
 
 
 

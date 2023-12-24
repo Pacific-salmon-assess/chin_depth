@@ -14,7 +14,14 @@ library(randomForest)
 depth_dat_raw1 <- readRDS(
   here::here("data", "depth_dat_nobin.RDS")) %>%
   # approximately 7k detections have no available ROMS data; exclude 
-  filter(!is.na(roms_temp))
+  filter(!is.na(roms_temp),
+         !agg == "unknown") %>% 
+  mutate(
+    agg = ifelse(agg %in% c("Fraser Sub.", "Fraser 4.1", "Fraser Fall"),
+                 "Fraser Sub.",
+                 agg)
+  ) %>% 
+  droplevels()
 
 # remove 2022 tag releases (~6k dets) for training model
 depth_dat_raw <- depth_dat_raw1 %>% 
@@ -36,13 +43,13 @@ ind_folds <- data.frame(
 depth_dat <- depth_dat_raw %>% 
   left_join(., ind_folds, by = "vemco_code") %>% 
   dplyr::select(
-    depth = rel_depth, fl, lipid, stage, utm_x, utm_y, day_night,
+    depth = rel_depth, fl, lipid, med_stage, utm_x, utm_y, day_night,
     det_dayx, det_dayy,
     max_bathy, mean_bathy, mean_slope, shore_dist,
     u, v, w, roms_temp, zoo, oxygen, thermo_depth, moon_illuminated,
     agg,
     ind_block
-  )  
+  ) 
 
 # split by individual blocking
 train_depth <- depth_dat %>% filter(!ind_block == "5") %>% droplevels()
@@ -50,7 +57,7 @@ test_depth <- depth_dat %>% filter(ind_block == "5") %>% droplevels()
 test_depth_22 <- depth_dat_raw1 %>% 
   filter(grepl("2022", vemco_code)) %>% 
   dplyr::select(
-    depth = rel_depth, fl, lipid, stage, utm_x, utm_y, day_night,
+    depth = rel_depth, fl, lipid, med_stage, utm_x, utm_y, day_night,
     det_dayx, det_dayy,
     max_bathy, mean_bathy, mean_slope, shore_dist,
     u, v, w, roms_temp, zoo, oxygen, thermo_depth, moon_illuminated,
@@ -76,16 +83,12 @@ train_depth_baked <- prep(depth_recipe) %>%
        new_data = train_depth %>% 
          dplyr::select(-ind_block, -max_bathy))
 
-# pull model attributes from top ranger
-rf_list <- readRDS(here::here("data", "model_fits", "rf_model_comparison.rds"))
-top_mod <- rf_list[[2]]$top_model
-
 ranger_rf_gsi <- ranger::ranger(
   depth ~ .,
   data = train_depth_baked,
   #hyperpars based on values from top model which is not saved on all locals
-  num.trees = 1500,
-  mtry = 13,
+  num.trees = 1000,
+  mtry = 17,
   keep.inbag = TRUE,
   quantreg = TRUE,
   importance = "permutation",
@@ -104,17 +107,17 @@ imp_vals <- ranger::importance(ranger_rf_gsi, type = "permutation", scale = F)
 # key for axis labels
 var_name_key <- data.frame(
   var = names(imp_vals),
-  var_f = c("Fork Length", "Lipid Content", "UTM X", "UTM Y", "Year Day 2", 
+  var_f = c("Fork Length", "Lipid Content", "Maturity", "UTM X", "UTM Y", "Year Day 2", 
             "Year Day 1", "Bottom Depth", "Bottom Slope", "Shore Distance", 
             "Hor. Current 1", "Hor. Current 2", "Vert. Current", "Temperature", 
-            "Zooplankton", "Oxygen", "Thermocline Depth", "Lunar Cycle", "Maturity",
-            "Day/Night",  "Up. Col.", "ECVI", "Fraser Sub.", "Fraser Year.",
-            "Low. Col", "Puget Sound", "WA/OR", "WCVI")
+            "Zooplankton", "Oxygen", "Thermocline Depth", "Lunar Cycle", 
+            "Day/Night",  "ECVI", "Fraser Sub.", "Fraser Year.",
+            "Low. Col", "North. BC", "Puget Sound", "Up. Col.",  "WA/OR", "WCVI")
 )
 
 imp_dat <- data.frame(
   var = names(imp_vals),
-  val = imp_vals2
+  val = imp_vals
 ) %>% 
   left_join(., var_name_key, by = "var") %>% 
   arrange(-val) %>% 
@@ -125,7 +128,7 @@ imp_dat <- data.frame(
                  "mean_slope") ~ "spatial",
       var %in% c("det_day", "det_dayx", "det_dayy",
                  "day_night_night", "moon_illuminated") ~ "temporal",
-      var %in% c("stage_mature", "fl", "lipid") ~ "biological",
+      var %in% c("med_stage", "fl", "lipid") ~ "biological",
       grepl("agg", var) ~ "stock",
       TRUE ~ "dynamic"
     )

@@ -91,7 +91,7 @@ ranger_rf <- ranger::ranger(
   data = train_depth_baked,
   #hyperpars based on values from top model which is not saved on all locals
   num.trees = 1000, #1500,
-  mtry = 9, #13,
+  mtry = 17, #13,
   # keep.inbag = TRUE for quantile predictions
   keep.inbag = TRUE,
   quantreg = TRUE,

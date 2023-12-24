@@ -419,7 +419,7 @@ rmse_out <- model_tbl %>%
   )
 
 
-png(here::here("figs", "model_comp", "rmse_plot1.png"), units = "in",
+png(here::here("figs", "model_comp", "rmse_plot.png"), units = "in",
     height = 3.5, width = 6, res = 250)
 ggplot(rmse_out %>% filter(model_type %in% c("gbm", "rf_weighted"))) +
   geom_point(aes(x = model_type, y = rmse, fill = response),
@@ -431,7 +431,7 @@ ggplot(rmse_out %>% filter(model_type %in% c("gbm", "rf_weighted"))) +
   labs(y = "Root Mean Square Error", x = "Model Type")
 dev.off()
 
-png(here::here("figs", "model_comp", "rmse_plot.png"), units = "in",
+png(here::here("figs", "model_comp", "rmse_plot_comp.png"), units = "in",
     height = 3.5, width = 6, res = 250)
 ggplot(rmse_out) +
   geom_point(aes(x = model_type, y = rmse, fill = response),

@@ -419,6 +419,18 @@ rmse_out <- model_tbl %>%
   )
 
 
+png(here::here("figs", "model_comp", "rmse_plot1.png"), units = "in",
+    height = 3.5, width = 6, res = 250)
+ggplot(rmse_out %>% filter(model_type %in% c("gbm", "rf_weighted"))) +
+  geom_point(aes(x = model_type, y = rmse, fill = response),
+             shape = 21,
+             position = position_dodge(width=0.75)) +
+  facet_wrap(~dataset) +
+  ggsidekick::theme_sleek() +
+  scale_fill_discrete(name = "Response\nDistribution") +
+  labs(y = "Root Mean Square Error", x = "Model Type")
+dev.off()
+
 png(here::here("figs", "model_comp", "rmse_plot.png"), units = "in",
     height = 3.5, width = 6, res = 250)
 ggplot(rmse_out) +
@@ -430,6 +442,7 @@ ggplot(rmse_out) +
   scale_fill_discrete(name = "Response\nDistribution") +
   labs(y = "Root Mean Square Error", x = "Model Type")
 dev.off()
+
 
 write.csv(rmse_out %>% arrange(dataset, desc(rmse)),
           here::here("figs", "model_comp", "top_model_transformed_rmse.csv"),
@@ -477,8 +490,16 @@ rf_weighted2_dat <- map2(names(rf_weighted2_list), rf_weighted2_list, function (
 }) %>% 
   bind_rows() 
 
-rf_hyper_plot <- list(rf_dat, rf_weighted_dat, rf_weighted2_dat) %>% 
+
+rf_hyper_plot <- ggplot(rf_dat) +
+  geom_line(aes(x = mtry, y = RMSE, color = splitrule)) +
+  facet_grid(response ~ n_trees, scales = "free_y") +
+  theme(legend.position = "top") +
+  ggsidekick::theme_sleek()
+
+rf_hyper_plot_comp <- list(rf_dat, rf_weighted_dat, rf_weighted2_dat) %>% 
   bind_rows() %>% 
+  filter(n_trees == "1000" & splitrule == "extratrees") %>% 
   ggplot(.) +
   geom_line(aes(x = mtry, y = RMSE, color = model)) +
   facet_wrap(~response, scales = "free_y") +
@@ -491,12 +512,12 @@ png(here::here("figs", "model_comp", "gbm_hyper_plot.png"), units = "in",
 gbm_hyper_plot
 dev.off()
 
+png(here::here("figs", "model_comp", "rf_hyper_plot_comp.png"), units = "in",
+    height = 4.5, width = 7.5, res = 250)
+rf_hyper_plot_comp
+dev.off()
+
 png(here::here("figs", "model_comp", "rf_hyper_plot.png"), units = "in",
     height = 4.5, width = 7.5, res = 250)
 rf_hyper_plot
-dev.off()
-
-png(here::here("figs", "model_comp", "rf_weighted_hyper_plot.png"), units = "in",
-    height = 4.5, width = 7.5, res = 250)
-rf_weighted_hyper_plot
 dev.off()

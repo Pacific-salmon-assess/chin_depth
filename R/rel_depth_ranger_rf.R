@@ -765,7 +765,7 @@ plot_foo <- function (data, ...) {
       labels = c("0.2", "0.4", "0.6")#,
       # limits = c(-0.6, -0.1)
       ) +
-    coord_cartesian(ylim = c(-0.6, -0.1))
+    coord_cartesian(ylim = c(-0.67, -0.1))
 }
 
 
@@ -818,7 +818,7 @@ mat_pred_in <- rbind(
   mutate(
     det_dayx = sin(2 * pi * local_day / 365),
     det_dayy = cos(2 * pi * local_day / 365)
-  )
+  ) 
 mat_preds <- pred_foo(mat_pred_in, type = "se", se.method = "infjack")
 
 mat_cond <- mat_preds %>% 
@@ -828,6 +828,7 @@ mat_cond <- mat_preds %>%
     stage_f = factor(med_stage, levels = c(0, 1), 
                      labels = c("immature", "mature"))
   ) %>% 
+  distinct() %>% 
   ggplot(.) +
   geom_pointrange(
     aes(x = stage_f, y = mean, ymin = lo, ymax = up)) +
@@ -840,7 +841,7 @@ mat_cond <- mat_preds %>%
   ) +
   scale_y_continuous(breaks = c(-0.2, -0.4, -0.6),
                      labels = c("0.2", "0.4", "0.6"),
-                     limits = c(-0.6, -0.15)
+                     limits = c(-0.67, -0.1)
   )
 
 
@@ -858,7 +859,7 @@ dn_pred_in <- rbind(
   mutate(
     det_dayx = sin(2 * pi * local_day / 365),
     det_dayy = cos(2 * pi * local_day / 365)
-  )
+  ) 
 dn_preds <- pred_foo(dn_pred_in, type = "se", se.method = "infjack")
 
 dn_cond <- dn_preds %>% 
@@ -868,6 +869,7 @@ dn_cond <- dn_preds %>%
     dn_f = factor(day_night_night, levels = c(0, 1), 
                      labels = c("day", "night"))
   ) %>% 
+  distinct() %>% 
   ggplot(.) +
   geom_pointrange(
     aes(x = dn_f, y = mean, ymin = lo, ymax = up)) +
@@ -880,7 +882,7 @@ dn_cond <- dn_preds %>%
   ) +
   scale_y_continuous(breaks = c(-0.2, -0.4, -0.6),
                      labels = c("0.2", "0.4", "0.6"),
-                     limits = c(-0.6, -0.15)
+                     limits = c(-0.68, -0.1)
   )
 
 

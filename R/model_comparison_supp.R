@@ -155,28 +155,28 @@ fit_sub <- gam(
   family = betar(link = "logit")
 )
 
-fit_full_trim <- gam(
-  rel_depth ~ te(utm_x, utm_y, bs=c("tp", "tp"), k=c(10, 10)) +
-    s(local_day, bs = "cc", k = 5) + 
-    s(med_stage, k = 4) +
-    day_night_dummy + 
-    s(vemco_code, bs = "re"),
-  data = train_depth,
-  knots = list(local_day = c(0, 365)),
-  family = betar(link = "logit")
-)
-
-fit_sub_trim <- gam(
-  mean_rel_depth ~ te(utm_x, utm_y, bs=c("tp", "tp"), k=c(10, 10)) +
-    s(local_day, bs = "cc", k = 5) + 
-    s(med_stage, k = 4) +
-    day_night_dummy + 
-    s(vemco_code, bs = "re"),
-  
-  data = train_bin,
-  knots = list(local_day = c(0, 365)),
-  family = betar(link = "logit")
-)
+# fit_full_trim <- gam(
+#   rel_depth ~ te(utm_x, utm_y, bs=c("tp", "tp"), k=c(10, 10)) +
+#     s(local_day, bs = "cc", k = 5) + 
+#     s(med_stage, k = 4) +
+#     day_night_dummy + 
+#     s(vemco_code, bs = "re"),
+#   data = train_depth,
+#   knots = list(local_day = c(0, 365)),
+#   family = betar(link = "logit")
+# )
+# 
+# fit_sub_trim <- gam(
+#   mean_rel_depth ~ te(utm_x, utm_y, bs=c("tp", "tp"), k=c(10, 10)) +
+#     s(local_day, bs = "cc", k = 5) + 
+#     s(med_stage, k = 4) +
+#     day_night_dummy + 
+#     s(vemco_code, bs = "re"),
+#   
+#   data = train_bin,
+#   knots = list(local_day = c(0, 365)),
+#   family = betar(link = "logit")
+# )
 
 concurvity(fit_sub)
 concurvity(fit_sub_trim)
@@ -186,8 +186,8 @@ concurvity(fit_full_trim)
 
 saveRDS(fit_sub, here::here("data", "model_fits", "gam_fits_sub.rds"))
 saveRDS(fit_full, here::here("data", "model_fits", "gam_fits_full.rds"))
-saveRDS(fit_sub_trim, here::here("data", "model_fits", "gam_fits_sub_trim.rds"))
-saveRDS(fit_full_trim, here::here("data", "model_fits", "gam_fits_full_trim.rds"))
+# saveRDS(fit_sub_trim, here::here("data", "model_fits", "gam_fits_sub_trim.rds"))
+# saveRDS(fit_full_trim, here::here("data", "model_fits", "gam_fits_full_trim.rds"))
 
 fit_full <- readRDS(here::here("data", "model_fits", "gam_fits_full.rds"))
 fit_sub <- readRDS(here::here("data", "model_fits", "gam_fits_sub.rds"))
@@ -237,7 +237,7 @@ ranger_rf <- ranger::ranger(
   rel_depth ~ .,
   data = train_depth_ml,
   num.trees =  1000, #$rf_list$rel_depth$top_model$num.trees,
-  mtry = 9, #rf_list$rel_depth$top_model$mtry,
+  mtry = 17, #rf_list$rel_depth$top_model$mtry,
   # keep.inbag = TRUE for quantile predictions
   keep.inbag = TRUE,
   quantreg = TRUE,
@@ -275,7 +275,11 @@ ranger_list <- list(ranger_rf,
                     ranger_rf_w,
                     ranger_rf_w2)
 saveRDS(ranger_list, here::here("data", "model_fits", "supp_ranger_fits.rds"))
+ranger_list <- readRDS(here::here("data", "model_fits", "supp_ranger_fits.rds"))
+ranger_list[[1]] <- ranger_rf
 
+ranger_rf_w <- ranger_list[[2]]
+ranger_rf_w2 <- ranger_list[[3]]
 
 rf_preds <- predict(ranger_rf, data = train_depth_ml %>% select(-rel_depth))
 rf_w_preds <- predict(ranger_rf_w, data = train_depth_ml %>% select(-rel_depth))
@@ -390,7 +394,6 @@ dev.off()
 ar1_est2 %>% 
   group_by(model) %>% 
   summarize(
-    med_ar1 = median(ar1),
     mean_ar1 = mean(ar1),
     sd_ar1 = sd(ar1)
   )

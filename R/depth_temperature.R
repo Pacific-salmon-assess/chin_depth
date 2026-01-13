@@ -53,7 +53,8 @@ depth_dat <- left_join(
       grepl("wwa", region_f) ~ "wa",
       TRUE ~ as.character(region_f)
     ),
-    oxy_mg_l = respR::convert_DO((oxygen / 1000), from = "mmol/L", to = "mg/L")
+    # convert O to mg/l
+    oxy_mg_l = (oxygen / 1000) * 31.998
   ) %>% 
   select(year, month, day, hour, latitude, longitude, 
          temp, oxy_mg_l, region_f, season, depth)
@@ -141,3 +142,13 @@ png(here::here("figs", "ms_figs_rel", "oxy_at_depth.png"),
     width = 9, height = 6)
 oxy_bin_plot
 dev.off()
+
+
+## export for Silviana
+saveRDS(
+  depth_dat %>% 
+  filter(!region_f %in% c("columbia", "or_ca")),
+  here::here(
+    "data", "temp_oxy_at_depth.rds"
+  )
+)

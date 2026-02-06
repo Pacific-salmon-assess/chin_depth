@@ -55,9 +55,7 @@ depth_dat <- left_join(
     ),
     # convert O to mg/l
     oxy_mg_l = (oxygen / 1000) * 31.998
-  ) %>% 
-  select(year, month, day, hour, latitude, longitude, 
-         temp, oxy_mg_l, region_f, season, depth)
+  ) 
 
 # as above but with bins for temp and depth
 depth_seq <- seq(-340, 0, by = 20)
@@ -69,6 +67,8 @@ oxy_labs <- as.character(oxy_seq[-length(oxy_seq)])
 
 
 depth_bin <- depth_dat %>% 
+  select(year, month, day, hour, latitude, longitude, 
+         temp, oxy_mg_l, region_f, season, depth) %>% 
   filter(!region_f %in% c("columbia", "or_ca")) %>% 
   mutate(
     depth_bin = cut(

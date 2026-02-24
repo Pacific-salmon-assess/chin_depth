@@ -5,7 +5,11 @@
 
 
 library(tidyverse)
-
+library(caret)
+library(recipes)
+library(DALEX)
+library(DALEXtra)
+library(randomForest)
 
 ranger_rf <- readRDS(here::here("data", "model_fits", "relative_rf_ranger.rds"))
 
@@ -97,6 +101,16 @@ base_plot +
 ## attributes)
 
 # biological data
+depth_dat_raw1 <- readRDS(
+  here::here("data", "depth_dat_nobin.RDS")) %>%
+  # approximately 7k detections have no available ROMS data; exclude 
+  filter(!is.na(roms_temp))
+
+
+# remove 2022 tag releases (~6k dets) for training model
+depth_dat_raw <- depth_dat_raw1 %>% 
+  filter(!grepl("2022", vemco_code))
+
 bio_dat <- depth_dat_raw %>% 
   # filter(med_stage %in% c("0", "1")) %>%
   select(vemco_code, fl, lipid) %>% 
@@ -110,6 +124,7 @@ pred_dat1 <- nearest_cells %>%
     med_stage = 1
   ) 
 
+library(ranger)
 pred_rf1 <- predict(ranger_rf,
                     type = "quantiles",
                     quantiles = c(0.025, 0.5, 0.975),
@@ -193,9 +208,13 @@ depth_dat <- purrr::pmap(
 ) %>% 
   bind_rows()
 
+png(
+  here::here("figs", "depths_by_sim_area.png"), height = 3, width = 6,
+  units = "in", res = 250
+)
 ggplot(depth_dat) +
   geom_histogram(aes(x = real_depth)) +
   geom_vline(aes(xintercept = max_bathy), color = "red") +
   facet_wrap(~subarea) +
   ggsidekick::theme_sleek()
-
+dev.off()

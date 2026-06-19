@@ -42,13 +42,19 @@ bath_grid <- bath_grid_in %>%
   filter(!mean_bathy > 400,
          !max_bathy > 500,
          utm_y > 5100, 
-         season == "summer")
+         season == "summer") %>% 
+  # day redefined below (note dates will not align with ROMS data but effect
+  # should be small)
+  select(
+    -c(det_dayx, det_dayy, local_day)
+  )
 
 
 pts <- data.frame(
   subarea	= c("21A", "20D", "29DE"),
   lon = c(-124.928, -123.753, -123.36),
-  lat = c(48.66694, 48.33989, 49.11563)
+  lat = c(48.66694, 48.33989, 49.11563),
+  local_day = c(196, 227, 258)
 )
 
 dist_m <- function(lon, lat, lon0, lat0) {
@@ -121,7 +127,10 @@ pred_dat1 <- nearest_cells %>%
   mutate(
     fl = mean(bio_dat$fl),
     lipid = mean(bio_dat$lipid),
-    med_stage = 1
+    med_stage = 1,
+    det_dayx = sin(2 * pi * local_day / 365),
+    det_dayy = cos(2 * pi * local_day / 365),
+    day_night_night = 0
   ) 
 
 library(ranger)
